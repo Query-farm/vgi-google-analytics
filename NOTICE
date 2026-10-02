@@ -1,0 +1,28 @@
+vgi-google-analytics
+Copyright (c) 2026 Query Farm LLC - https://query.farm
+
+This product is licensed under the MIT License. See LICENSE.
+
+------------------------------------------------------------------------------
+
+Google Analytics data
+
+This software reads the Google Analytics Data API and Admin API on behalf of
+the credential it is given. The analytics data it returns belongs to the owner
+of each Google Analytics property, is not covered by the MIT License above, and
+is accessed subject to the Google Analytics Terms of Service and the Google APIs
+Terms of Service:
+
+    https://marketingplatform.google.com/about/analytics/terms/us/
+    https://developers.google.com/terms
+
+Neither this software nor Query Farm LLC is affiliated with, endorsed by, or
+sponsored by Google LLC. "Google Analytics" is a trademark of Google LLC and is
+used here only to describe what this software connects to.
+
+------------------------------------------------------------------------------
+
+Third-party dependencies
+
+google-auth (Apache-2.0), httpx (BSD-3-Clause), pyarrow (Apache-2.0) and
+vgi-python are used under their own licenses. No GPL or AGPL code is included.
