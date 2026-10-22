@@ -159,8 +159,8 @@ requires the standard Google API endpoints, so `data_api_url` and
 `admin_api_url` cannot be overridden with it.
 
 **Query Farm setup (publisher only):** this checkout includes Query Farm's
-Desktop OAuth client registration in `vgi_google_analytics/oauth_app.py` — the
-same registration the Search Console worker uses. Its Google Cloud project must
+Desktop OAuth client registration in `vgi_google_analytics/oauth_app.py`, in
+the `query-farm-analytics-console` Google Cloud project. That project must
 have the *Google Analytics Data API* and *Google Analytics Admin API* enabled,
 and its consent screen must list the `analytics.readonly` scope for the
 intended audience. During testing, add participating Google accounts as test

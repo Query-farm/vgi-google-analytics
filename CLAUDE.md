@@ -50,9 +50,9 @@ from the current directory — run it from the repo root or the waivers vanish.
   literally named that.
 - **Browser OAuth is local only.** Only the stdio entry point enables browser
   sign-in. HTTP/TCP/Unix workers cannot use it, including with `--allow-adc`.
-  Query Farm supplies the Desktop app registration (`oauth_app.py`, shared with
-  the Search Console worker); users have no configure command or OS credential
-  store. Each ATTACH returns a versioned refreshable `OAuthGrant` in
+  Query Farm supplies the Desktop app registration (`oauth_app.py`, project
+  `query-farm-analytics-console`); users have no configure command or OS
+  credential store. Each ATTACH returns a versioned refreshable `OAuthGrant` in
   `attach_opaque_data`, including the client registration and refresh token.
   Treat these bytes as credentials, never log them, and omit secrets from reprs
   and error messages. They are not encrypted by the worker. Fresh workers must
