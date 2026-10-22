@@ -41,6 +41,7 @@ import httpx
 from google.auth.exceptions import TransportError
 
 from vgi_google_analytics.auth import Credentials
+from vgi_google_analytics.oauth_page import CONTENT_SECURITY_POLICY, Outcome, render_page
 from vgi_google_analytics.settings import MAX_PAGE_SIZE, Settings
 
 #: The Data API RPCs that are reads despite being POSTs. Nothing else may POST.
@@ -288,7 +289,7 @@ class _OAuthCallbackHandler(BaseHTTPRequestHandler):
             parts = urlsplit(self.path)
             values = parse_qs(parts.query, keep_blank_values=True, max_num_fields=20)
         except ValueError:
-            self._respond(400, "Invalid sign-in response.")
+            self._respond(400, "invalid")
             return
         states = values.get("state", [])
         expected_host = f"127.0.0.1:{server.server_port}"
@@ -303,20 +304,22 @@ class _OAuthCallbackHandler(BaseHTTPRequestHandler):
         codes, errors = values.get("code", []), values.get("error", [])
         if valid and len(codes) == 1 and codes[0] and not errors:
             server.code = codes[0]
+            self._respond(200, "received")
         elif valid and len(errors) == 1 and errors[0] and not codes:
             server.denied = True
+            self._respond(200, "denied")
         else:
-            self._respond(400, "This sign-in response was not accepted. Return to the Google sign-in page.")
-            return
-        self._respond(200, "Google sign-in response received. You can return to your SQL session.")
+            self._respond(400, "invalid")
 
-    def _respond(self, status: int, message: str) -> None:
-        body = message.encode()
+    def _respond(self, status: int, outcome: Outcome) -> None:
+        body = render_page("google-analytics", outcome)
         self.send_response(status)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 

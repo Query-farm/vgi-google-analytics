@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Browser sign-in responses use a self-contained Query Farm page with light
+  and dark themes, connector-specific documentation, and distinct received,
+  declined and invalid response states. Authorization receipt is shown before
+  the SQL session completes the credential exchange.
 - `report()`, `realtime_report()` and `check_compatibility()` gain a leading
   `property_id` column.
 - Upgraded to `vgi-python` 0.45 and `vgi-rpc` 0.52. `vgi-python` is held below

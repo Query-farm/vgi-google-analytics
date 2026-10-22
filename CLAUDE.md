@@ -101,6 +101,10 @@ from the current directory — run it from the repo root or the waivers vanish.
 
 ## Testing notes
 
+- `oauth_page.py` and `oauth_assets/` are the canonical shared sign-in design.
+  Copy both unchanged into `vgi-google-search-console/vgi_google_search_console/`
+  when updating them. Fonts and their licenses are bundled; no page assets are
+  fetched at runtime. The page confirms receipt, not a completed token exchange.
 - `tests/fake_ga.py` is a deterministic GA4 stand-in (fixed `TODAY`, synthetic
   fact table). `handle()` plugs into `httpx.MockTransport`; `serve()` runs it
   on a socket for the end-to-end tier, which ATTACHes the worker subprocess with
