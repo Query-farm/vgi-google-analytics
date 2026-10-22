@@ -291,8 +291,9 @@ class TestFlatteners:
             ],
             "metricCompatibilities": [{"metricMetadata": {"apiName": "m"}, "compatibility": "INCOMPATIBLE"}],
         }
-        rows = discovery.flatten_compatibility(payload, ["a"], [])
+        rows = discovery.flatten_compatibility("1", payload, ["a"], [])
         assert [(r["kind"], r["requested"]) for r in rows] == [("dimension", True), ("metric", False)]
+        assert {r["property_id"] for r in rows} == {"1"}
 
     def test_quota_rows(self) -> None:
         rows = discovery.flatten_quota(

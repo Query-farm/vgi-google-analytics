@@ -32,14 +32,6 @@ ADMIN_TTL_SECONDS = 300
 #: The dimension/metric catalogue changes only when a custom definition does.
 METADATA_TTL_SECONDS = 3_600
 
-#: A scalar subquery for "some property this credential can read". Used in the
-#: catalog's runnable examples so that they execute against *any* credential
-#: rather than a property id that only exists in one account.
-ANY_PROPERTY = (
-    "(SELECT property_id FROM ga4.main.account_summaries "
-    "WHERE property_id IS NOT NULL ORDER BY property_id LIMIT 1)"
-)
-
 
 def session(params: Any) -> Session:
     """This call's credentials and its catalog's ATTACH settings.
@@ -85,3 +77,17 @@ class ListState(ArrowSerializableDataclass):
     page_token: str = ""
     started: bool = False
     done: bool = False
+
+
+@dataclass(kw_only=True)
+class FanoutState(ArrowSerializableDataclass):
+    """A one-call-per-property scan: the properties still to visit, head first.
+
+    ``fanout`` is true when the caller passed ``''`` (every property) rather
+    than naming one — only then is a property that refuses skipped, not fatal.
+    """
+
+    targets_json: str = ""
+    started: bool = False
+    done: bool = False
+    fanout: bool = False

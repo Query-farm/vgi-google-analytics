@@ -9,6 +9,9 @@
   so before a report fails.
 * ``property_quota(property)`` — the Data API token budget left this hour and
   today.
+
+``check_compatibility`` and ``property_quota`` also take ``''`` for every
+readable property, one call per property, stamped with ``property_id``.
 """
 
 from __future__ import annotations
@@ -24,10 +27,11 @@ from vgi.table_function import BindParams, ProcessParams, TableFunctionGenerator
 from vgi_rpc.rpc import OutputCollector
 
 from vgi_google_analytics import ga_api
+from vgi_google_analytics.admin import current_property, next_property, skippable
 from vgi_google_analytics.common import (
-    ANY_PROPERTY,
     METADATA_TTL_SECONDS,
     REQUIRED_SECRETS,
+    FanoutState,
     emit,
     session,
 )
@@ -170,9 +174,9 @@ class DimensionsFunction(_MetadataFunction):
                     "WHERE description ILIKE '%landing page%'",
                 ),
                 (
-                    "A property's custom dimensions",
-                    f"SELECT api_name, ui_name FROM ga4.main.dimensions({ANY_PROPERTY}) "
-                    "WHERE custom_definition",
+                    "Dimensions that are new names for a deprecated one",
+                    "SELECT api_name, deprecated_api_names FROM ga4.main.dimensions('0') "
+                    "WHERE len(deprecated_api_names) > 0",
                 ),
             ),
         )
@@ -260,7 +264,9 @@ def _list_arg(name: str, doc: str) -> Arg[list[str]]:
 class CompatibilityArgs:
     """``check_compatibility(property, dimensions =>, metrics =>)``."""
 
-    property: Annotated[str, Arg(0, doc="GA4 property id, e.g. '123456789'.")]
+    property: Annotated[
+        str, Arg(0, doc="GA4 property id, e.g. '123456789'; '' checks every readable property.")
+    ]
     dimensions: Annotated[list[str], _list_arg("dimensions", "Dimensions you intend to report on.")] = field(
         default_factory=list
     )
@@ -276,7 +282,7 @@ class CompatibilityArgs:
 
 
 def flatten_compatibility(
-    payload: dict[str, Any], dimensions: list[str], metrics: list[str]
+    prop: str, payload: dict[str, Any], dimensions: list[str], metrics: list[str]
 ) -> list[dict[str, Any]]:
     """``checkCompatibility`` results as rows, flagging the requested fields."""
     rows: list[dict[str, Any]] = []
@@ -289,6 +295,7 @@ def flatten_compatibility(
             name = meta.get("apiName")
             rows.append(
                 {
+                    "property_id": prop,
                     "kind": kind,
                     "api_name": name,
                     "ui_name": meta.get("uiName"),
@@ -300,7 +307,7 @@ def flatten_compatibility(
 
 
 @init_single_worker
-class CheckCompatibilityFunction(TableFunctionGenerator[CompatibilityArgs, None]):
+class CheckCompatibilityFunction(TableFunctionGenerator[CompatibilityArgs, FanoutState]):
     """``checkCompatibility``: which fields can join the ones you have chosen."""
 
     class Meta:
@@ -320,26 +327,28 @@ class CheckCompatibilityFunction(TableFunctionGenerator[CompatibilityArgs, None]
                 "dimensions, for example). Returns every dimension and metric with COMPATIBLE or "
                 "INCOMPATIBLE given the ones passed in; rows with requested = true are the ones "
                 "you asked about. Also answers 'what else could I add to this report?'. Costs no "
-                "report quota."
+                "report quota. Pass a property id as a literal, or '' to check every property."
             ),
             md=(
                 "The Data API's `checkCompatibility`. One row for every dimension and metric of "
                 "the property, saying whether it could be added to a report containing the "
                 "fields passed in.\n\n"
                 "If any requested field is `INCOMPATIBLE`, `report()` with the same fields will "
-                "fail; drop it, or split the question into two reports."
+                "fail; drop it, or split the question into two reports.\n\n"
+                "Pass `''` to check every readable property; `property_id` says which property "
+                "each row describes."
             ),
             example_queries=examples(
                 (
                     "Is the requested combination valid?",
-                    "SELECT api_name, compatibility FROM ga4.main.check_compatibility("
-                    f"{ANY_PROPERTY}, dimensions => ['itemName'], metrics => ['sessions']) "
-                    "WHERE requested",
+                    "SELECT property_id, api_name, compatibility FROM ga4.main.check_compatibility("
+                    "'', dimensions => ['itemName'], metrics => ['sessions']) "
+                    "WHERE requested ORDER BY property_id, api_name",
                 ),
                 (
                     "Which dimensions can break down item revenue?",
-                    "SELECT api_name FROM ga4.main.check_compatibility("
-                    f"{ANY_PROPERTY}, metrics => ['itemRevenue']) "
+                    "SELECT DISTINCT api_name FROM ga4.main.check_compatibility("
+                    "'', metrics => ['itemRevenue']) "
                     "WHERE kind = 'dimension' AND compatibility = 'COMPATIBLE' ORDER BY api_name",
                 ),
             ),
@@ -347,9 +356,9 @@ class CheckCompatibilityFunction(TableFunctionGenerator[CompatibilityArgs, None]
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT api_name, compatibility FROM ga4.main.check_compatibility("
-                    f"{ANY_PROPERTY}, dimensions => ['itemName'], metrics => ['sessions']) "
-                    "WHERE requested"
+                    "SELECT property_id, api_name, compatibility FROM ga4.main.check_compatibility("
+                    "'', dimensions => ['itemName'], metrics => ['sessions']) "
+                    "WHERE requested ORDER BY property_id, api_name"
                 ),
                 description="Is the requested combination valid?",
             ),
@@ -358,7 +367,8 @@ class CheckCompatibilityFunction(TableFunctionGenerator[CompatibilityArgs, None]
     @classmethod
     def on_bind(cls, params: BindParams[CompatibilityArgs]) -> BindResponse:
         """Validate arguments and declare the fixed schema."""
-        ga_api.property_id(params.args.property)
+        if params.args.property.strip():
+            ga_api.property_id(params.args.property)
         parse_filter("dimension_filter", params.args.dimension_filter)
         parse_filter("metric_filter", params.args.metric_filter)
         if not params.args.dimensions and not params.args.metrics:
@@ -366,9 +376,20 @@ class CheckCompatibilityFunction(TableFunctionGenerator[CompatibilityArgs, None]
         return BindResponse(output_schema=COMPATIBILITY_SCHEMA)
 
     @classmethod
-    def process(cls, params: ProcessParams[CompatibilityArgs], state: None, out: OutputCollector) -> None:
-        """Ask GA4 and emit one row per field."""
+    def initial_state(cls, params: ProcessParams[CompatibilityArgs]) -> FanoutState:
+        """Start before the first property."""
+        return FanoutState()
+
+    @classmethod
+    def process(
+        cls, params: ProcessParams[CompatibilityArgs], state: FanoutState, out: OutputCollector
+    ) -> None:
+        """Ask GA4 about one property and emit one row per field."""
         args = params.args
+        prop = None if state.done else current_property(params, args.property, state)
+        if prop is None:
+            out.finish()
+            return
         body: dict[str, Any] = {
             "dimensions": [{"name": d} for d in args.dimensions],
             "metrics": [{"name": m} for m in args.metrics],
@@ -377,10 +398,15 @@ class CheckCompatibilityFunction(TableFunctionGenerator[CompatibilityArgs, None]
             body["dimensionFilter"] = dimension_filter
         if metric_filter := parse_filter("metric_filter", args.metric_filter):
             body["metricFilter"] = metric_filter
-        payload = ga_api.check_compatibility(args.property, body, session(params))
-        rows = flatten_compatibility(payload, list(args.dimensions), list(args.metrics))
+        try:
+            payload = ga_api.check_compatibility(prop, body, session(params))
+        except ga_api.GoogleAnalyticsError as exc:
+            if not skippable(state, prop, exc):
+                raise
+            payload = {}
+        rows = flatten_compatibility(prop, payload, list(args.dimensions), list(args.metrics))
+        next_property(state)
         emit(out, build_filtered(params, rows), METADATA_TTL_SECONDS)
-        out.finish()
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +418,9 @@ class CheckCompatibilityFunction(TableFunctionGenerator[CompatibilityArgs, None]
 class QuotaArgs:
     """``property_quota(property)``."""
 
-    property: Annotated[str, Arg(0, doc="GA4 property id, e.g. '123456789'.")]
+    property: Annotated[
+        str, Arg(0, doc="GA4 property id, e.g. '123456789'; '' reads every readable property's quota.")
+    ]
 
 
 #: What each quota limits; Google's names are terse.
@@ -433,7 +461,7 @@ def flatten_quota(prop: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 @init_single_worker
-class PropertyQuotaFunction(TableFunctionGenerator[QuotaArgs, None]):
+class PropertyQuotaFunction(TableFunctionGenerator[QuotaArgs, FanoutState]):
     """The property's remaining Data API quota."""
 
     class Meta:
@@ -450,46 +478,63 @@ class PropertyQuotaFunction(TableFunctionGenerator[QuotaArgs, None]):
             llm=(
                 "How much Data API quota a property has left this hour and today. Check it when "
                 "report() fails with RESOURCE_EXHAUSTED, or before running many large reports. "
-                "Reading it runs one tiny report, which itself costs a token or so."
+                "Reading it runs one tiny report, which itself costs a token or so. Pass a "
+                "property id as a literal, or '' for every readable property."
             ),
             md=(
                 "One row per quota. Standard properties get 200,000 tokens a day and 40,000 an "
                 "hour; GA4 360 ten times that. A report's cost grows with its date range, "
                 "dimensions and rows.\n\n"
                 "The snapshot is read from a one-row probe report, so `consumed` is that probe's "
-                "own cost and `remaining` is what is left after it."
+                "own cost and `remaining` is what is left after it.\n\n"
+                "Pass `''` to read every readable property's quota (one probe each); "
+                "`WHERE property_id = ...` reads only those."
             ),
             example_queries=examples(
                 (
-                    "Tokens left this hour and today",
-                    f"SELECT quota, remaining FROM ga4.main.property_quota({ANY_PROPERTY}) "
-                    "WHERE quota IN ('tokensPerHour', 'tokensPerDay')",
+                    "Tokens left this hour and today, per property",
+                    "SELECT property_id, quota, remaining FROM ga4.main.property_quota('') "
+                    "WHERE quota IN ('tokensPerHour', 'tokensPerDay') ORDER BY property_id, quota",
                 ),
             ),
         )
         examples = [
             FunctionExample(
                 sql=(
-                    f"SELECT quota, remaining FROM ga4.main.property_quota({ANY_PROPERTY}) "
-                    "WHERE quota IN ('tokensPerHour', 'tokensPerDay')"
+                    "SELECT property_id, quota, remaining FROM ga4.main.property_quota('') "
+                    "WHERE quota IN ('tokensPerHour', 'tokensPerDay') ORDER BY property_id, quota"
                 ),
-                description="Tokens left this hour and today",
+                description="Tokens left this hour and today, per property",
             ),
         ]
 
     @classmethod
     def on_bind(cls, params: BindParams[QuotaArgs]) -> BindResponse:
         """Validate the property id and declare the fixed schema."""
-        ga_api.property_id(params.args.property)
+        if params.args.property.strip():
+            ga_api.property_id(params.args.property)
         return BindResponse(output_schema=QUOTA_SCHEMA)
 
     @classmethod
-    def process(cls, params: ProcessParams[QuotaArgs], state: None, out: OutputCollector) -> None:
-        """Run the probe report and emit its quota snapshot."""
-        prop = ga_api.property_id(params.args.property)
-        payload = ga_api.run_report(prop, QUOTA_PROBE, session(params))
+    def initial_state(cls, params: ProcessParams[QuotaArgs]) -> FanoutState:
+        """Start before the first property."""
+        return FanoutState()
+
+    @classmethod
+    def process(cls, params: ProcessParams[QuotaArgs], state: FanoutState, out: OutputCollector) -> None:
+        """Run one property's probe report and emit its quota snapshot."""
+        prop = None if state.done else current_property(params, params.args.property, state)
+        if prop is None:
+            out.finish()
+            return
+        try:
+            payload = ga_api.run_report(prop, QUOTA_PROBE, session(params))
+        except ga_api.GoogleAnalyticsError as exc:
+            if not skippable(state, prop, exc):
+                raise
+            payload = {}
+        next_property(state)
         out.emit(build_filtered(params, flatten_quota(prop, payload)))
-        out.finish()
 
 
 DISCOVERY_FUNCTIONS: list[type] = [

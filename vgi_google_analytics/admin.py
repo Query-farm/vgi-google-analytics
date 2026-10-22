@@ -21,7 +21,7 @@ import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, ClassVar
+from typing import Annotated, Any, ClassVar, Protocol
 
 import pyarrow as pa
 from vgi.arguments import Arg
@@ -33,7 +33,6 @@ from vgi_rpc.rpc import OutputCollector
 from vgi_google_analytics import ga_api
 from vgi_google_analytics.common import (
     ADMIN_TTL_SECONDS,
-    ANY_PROPERTY,
     REQUIRED_SECRETS,
     ListState,
     emit,
@@ -41,7 +40,7 @@ from vgi_google_analytics.common import (
 )
 from vgi_google_analytics.ga_api import Session, trailing_id
 from vgi_google_analytics.meta import docs, examples
-from vgi_google_analytics.pushdown import build_filtered, equality
+from vgi_google_analytics.pushdown import build_filtered, discrete_strings, equality
 from vgi_google_analytics.schemas import (
     ACCOUNT_SCHEMA,
     ACCOUNT_SUMMARY_SCHEMA,
@@ -214,6 +213,75 @@ def all_property_ids(sess: Session) -> list[str]:
             )
         if not token:
             return ids
+
+
+def requested_properties(params: ProcessParams[Any], raw: str, sess: Session) -> tuple[list[str], bool]:
+    """The properties a scan visits, and whether that is an every-property walk.
+
+    A named property is just that one. ``''`` is every property the credential
+    can read — unless the query pins ``property_id`` with ``=`` or ``IN``, in
+    which case only those are visited (a value that is not a valid id could not
+    match any row, so it is dropped rather than rejected).
+    """
+    if raw.strip():
+        return [ga_api.property_id(raw)], False
+    pinned = discrete_strings(params, "property_id")
+    if pinned is None:
+        return all_property_ids(sess), True
+    ids: list[str] = []
+    for value in pinned:
+        try:
+            ids.append(ga_api.property_id(value))
+        except ValueError:
+            continue
+    return list(dict.fromkeys(ids)), True
+
+
+class PropertyQueue(Protocol):
+    """Scan state that walks a queue of properties (``FanoutState``, ``ReportState``)."""
+
+    targets_json: str
+    started: bool
+    done: bool
+    fanout: bool
+
+
+def current_property(params: ProcessParams[Any], raw: str, state: PropertyQueue) -> str | None:
+    """The property this tick works on, building the queue on the first tick.
+
+    Returns ``None`` (and marks the scan done) once the queue is empty.
+    """
+    if not state.started:
+        targets, state.fanout = requested_properties(params, raw, session(params))
+        state.targets_json = json.dumps(targets)
+        state.started = True
+    queue: list[str] = json.loads(state.targets_json)
+    if not queue:
+        state.done = True
+        return None
+    return queue[0]
+
+
+def next_property(state: PropertyQueue) -> None:
+    """Drop the head of the queue; the scan is done when nothing is left."""
+    queue: list[str] = json.loads(state.targets_json)[1:]
+    state.targets_json = json.dumps(queue)
+    state.done = not queue
+
+
+#: Data API calls skipped during an every-property walk: no access to that
+#: property's data, or it vanished. A 400 is *not* skipped — for a report it
+#: means the request itself is wrong, and skipping it on every property would
+#: turn a mistake into an empty result.
+SKIPPABLE_DATA_ERRORS = frozenset({403, 404})
+
+
+def skippable(state: PropertyQueue, prop: str, exc: ga_api.GoogleAnalyticsError) -> bool:
+    """Whether ``exc`` on ``prop`` should skip that property rather than fail the scan."""
+    if state.fanout and exc.status in SKIPPABLE_DATA_ERRORS:
+        _log.warning("skipping %s during an every-property walk: %s", prop, exc)
+        return True
+    return False
 
 
 def _emit_simple_page(
@@ -567,11 +635,7 @@ class PropertyArgs:
 
 
 def _per_property_targets(params: ProcessParams[PropertyArgs]) -> Callable[[Session], list[str]]:
-    requested = params.args.property.strip()
-    if requested:
-        prop = ga_api.property_id(requested)
-        return lambda _sess: [prop]
-    return all_property_ids
+    return lambda sess: requested_properties(params, params.args.property, sess)[0]
 
 
 def _property_list_fetch(
@@ -625,8 +689,9 @@ class _PropertyListFunction(TableFunctionGenerator[PropertyArgs, ListState]):
 _ALL_PROPERTIES_NOTE = (
     "\n\n### Every property at once\n\n"
     "Pass `''` instead of a property id to walk every property the credential can read — the "
-    "`property_id` column says which each row came from. A property that refuses the listing "
-    "(a rollup property has no streams of its own, for example) is skipped."
+    "`property_id` column says which each row came from, and `WHERE property_id = ...` (or "
+    "`IN`) visits only the properties it names. A property that refuses the listing (a rollup "
+    "property has no streams of its own, for example) is skipped."
 )
 
 
@@ -672,8 +737,9 @@ class DataStreamsFunction(_PropertyListFunction):
                     "WHERE type = 'WEB_DATA_STREAM' ORDER BY default_uri",
                 ),
                 (
-                    "The streams of one property",
-                    f"SELECT stream_id, type, display_name FROM ga4.main.data_streams({ANY_PROPERTY})",
+                    "Every stream, grouped by property",
+                    "SELECT property_id, stream_id, type, display_name FROM ga4.main.data_streams('') "
+                    "ORDER BY property_id, stream_id",
                 ),
             ),
         )
@@ -730,9 +796,9 @@ class CustomDimensionsFunction(_PropertyListFunction):
             ),
             example_queries=examples(
                 (
-                    "Custom dimensions of one property, as report api names",
-                    "SELECT api_name, display_name, scope "
-                    f"FROM ga4.main.custom_dimensions({ANY_PROPERTY}) ORDER BY api_name",
+                    "Custom dimensions of every property, as report api names",
+                    "SELECT property_id, api_name, display_name, scope "
+                    "FROM ga4.main.custom_dimensions('') ORDER BY property_id, api_name",
                 ),
                 (
                     "Custom dimensions defined on some properties but not others",
@@ -744,10 +810,10 @@ class CustomDimensionsFunction(_PropertyListFunction):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT api_name, display_name, scope "
-                    f"FROM ga4.main.custom_dimensions({ANY_PROPERTY}) ORDER BY api_name"
+                    "SELECT property_id, api_name, display_name, scope "
+                    "FROM ga4.main.custom_dimensions('') ORDER BY property_id, api_name"
                 ),
-                description="Custom dimensions of one property, as report api names",
+                description="Custom dimensions of every property, as report api names",
             ),
         ]
 
@@ -789,19 +855,19 @@ class CustomMetricsFunction(_PropertyListFunction):
             ),
             example_queries=examples(
                 (
-                    "Custom metrics of one property, with their units",
-                    "SELECT api_name, display_name, measurement_unit "
-                    f"FROM ga4.main.custom_metrics({ANY_PROPERTY}) ORDER BY api_name",
+                    "Custom metrics of every property, with their units",
+                    "SELECT property_id, api_name, display_name, measurement_unit "
+                    "FROM ga4.main.custom_metrics('') ORDER BY property_id, api_name",
                 ),
             ),
         )
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT api_name, display_name, measurement_unit "
-                    f"FROM ga4.main.custom_metrics({ANY_PROPERTY}) ORDER BY api_name"
+                    "SELECT property_id, api_name, display_name, measurement_unit "
+                    "FROM ga4.main.custom_metrics('') ORDER BY property_id, api_name"
                 ),
-                description="Custom metrics of one property, with their units",
+                description="Custom metrics of every property, with their units",
             ),
         ]
 
@@ -845,9 +911,9 @@ class KeyEventsFunction(_PropertyListFunction):
             ),
             example_queries=examples(
                 (
-                    "Key events of one property",
-                    "SELECT event_name, counting_method, custom "
-                    f"FROM ga4.main.key_events({ANY_PROPERTY}) ORDER BY event_name",
+                    "Key events of every property",
+                    "SELECT property_id, event_name, counting_method, custom "
+                    "FROM ga4.main.key_events('') ORDER BY property_id, event_name",
                 ),
                 (
                     "Properties that do not track a purchase key event",
@@ -860,10 +926,10 @@ class KeyEventsFunction(_PropertyListFunction):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT event_name, counting_method, custom "
-                    f"FROM ga4.main.key_events({ANY_PROPERTY}) ORDER BY event_name"
+                    "SELECT property_id, event_name, counting_method, custom "
+                    "FROM ga4.main.key_events('') ORDER BY property_id, event_name"
                 ),
-                description="Key events of one property",
+                description="Key events of every property",
             ),
         ]
 

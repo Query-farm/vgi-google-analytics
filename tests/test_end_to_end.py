@@ -12,14 +12,17 @@ The live counterpart, against real Google Analytics, is ``test_live.py``.
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from tests import fake_ga
+from vgi_google_analytics import worker
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -357,3 +360,148 @@ class TestAttachOptions:
             "metrics => ['activeUsers'], start_date => '2026-09-01')",
         )
         assert {b["limit"] for b in report_requests()} == {PAGE_SIZE}
+
+
+def data_calls(rpc: str) -> list[str]:
+    """The properties a Data API ``rpc`` was sent to, in order."""
+    suffix = f":{rpc}"
+    return [
+        path.removeprefix("/data/v1beta/properties/").removesuffix(suffix)
+        for _method, path, _q, _body in fake_ga.REQUESTS
+        if path.endswith(suffix)
+    ]
+
+
+class TestEveryProperty:
+    """``''`` runs a property-scoped function on every readable property."""
+
+    def test_report_covers_every_property(self, con: Any) -> None:
+        got = rows(
+            con,
+            "SELECT property_id, count(*) FROM ga4.main.report('', dimensions => ['date'], "
+            "metrics => ['activeUsers'], start_date => '3daysAgo', end_date => 'yesterday') "
+            "GROUP BY ALL ORDER BY ALL",
+        )
+        assert got == [("1001", 3), ("1002", 3)]
+
+    def test_property_id_is_the_first_column(self, con: Any) -> None:
+        cur = con.execute("SELECT * FROM ga4.main.report('1001', metrics => ['activeUsers'], max_rows => 1)")
+        assert [d[0] for d in cur.description] == ["property_id", "activeUsers"]
+        assert cur.fetchall()[0][0] == "1001"
+
+    def test_where_property_id_visits_only_that_property(self, con: Any) -> None:
+        got = rows(
+            con,
+            "SELECT DISTINCT property_id FROM ga4.main.report('', metrics => ['activeUsers']) "
+            "WHERE property_id = '1002'",
+        )
+        assert got == [("1002",)]
+        assert set(data_calls("runReport")) == {"1002"}
+
+    def test_report_pages_across_properties(self, con: Any) -> None:
+        # 28 dates per property at page size 10: three pages each, one property after the other.
+        got = rows(
+            con,
+            "SELECT property_id, count(*) FROM ga4.main.report('', dimensions => ['date'], "
+            "metrics => ['sessions']) GROUP BY ALL ORDER BY ALL",
+        )
+        assert [count for _prop, count in got] == [28, 28]
+        calls = data_calls("runReport")
+        assert calls == sorted(calls)  # Each property is finished before the next begins.
+
+    def test_max_rows_caps_the_whole_walk(self, con: Any) -> None:
+        got = rows(
+            con,
+            "SELECT count(*) FROM ga4.main.report('', dimensions => ['date'], "
+            "metrics => ['sessions'], max_rows => 12)",
+        )
+        assert got == [(12,)]
+
+    def test_custom_definitions_need_a_named_property(self, con: Any) -> None:
+        with pytest.raises(Exception, match="pass a property id"):
+            rows(con, "SELECT * FROM ga4.main.report('', dimensions => ['customEvent:plan_tier'])")
+        assert rows(
+            con,
+            "SELECT count(*) > 0 FROM ga4.main.report('1001', dimensions => ['customEvent:plan_tier'], "
+            "metrics => ['eventCount'])",
+        ) == [(True,)]
+
+    def test_realtime_quota_and_compatibility(self, con: Any) -> None:
+        realtime = rows(
+            con,
+            "SELECT property_id, count(*) FROM ga4.main.realtime_report('', dimensions => ['country'], "
+            "metrics => ['activeUsers']) GROUP BY ALL ORDER BY ALL",
+        )
+        assert realtime == [("1001", 3), ("1002", 3)]
+        quota = rows(
+            con,
+            "SELECT property_id, remaining FROM ga4.main.property_quota('') "
+            "WHERE quota = 'tokensPerHour' ORDER BY property_id",
+        )
+        assert [prop for prop, _ in quota] == ["1001", "1002"]
+        compatible = rows(
+            con,
+            "SELECT DISTINCT property_id FROM ga4.main.check_compatibility('', metrics => ['sessions']) "
+            "ORDER BY property_id",
+        )
+        assert compatible == [("1001",), ("1002",)]
+
+    def test_configuration_lists_narrow_on_property_id(self, con: Any) -> None:
+        rows(con, "SELECT * FROM ga4.main.data_streams('') WHERE property_id = '1002'")
+        listed = [path for _m, path, _q, _b in fake_ga.REQUESTS if path.endswith("/dataStreams")]
+        assert listed == ["/admin/v1beta/properties/1002/dataStreams"]
+
+
+def _documented_examples() -> list[tuple[str, str]]:
+    schema = worker._GA4_CATALOG.schemas[0]
+    blobs = [("catalog", worker._CATALOG_TAGS.get("vgi.example_queries", "[]"))]
+    blobs += [("schema", worker._SCHEMA_TAGS["vgi.example_queries"])]
+    blobs += [(fn.Meta.name, fn.Meta.tags["vgi.example_queries"]) for fn in worker._FUNCTIONS]
+    blobs += [(table.name, table.tags["vgi.example_queries"]) for table in schema.tables]
+    found = [
+        (f"{owner}: {example['description']}", example["sql"])
+        for owner, blob in blobs
+        for example in json.loads(blob)
+    ]
+    found += [
+        (f"{fn.Meta.name} example: {example.description}", example.sql)
+        for fn in worker._FUNCTIONS
+        for example in fn.Meta.examples
+    ]
+    return found
+
+
+def _grader_queries() -> list[tuple[str, str]]:
+    graders = yaml.safe_load((ROOT / "vgi-agent-tests.yaml").read_text())["tasks"]
+    found = []
+    for grader in graders:
+        reference = grader["reference_sql"]
+        for sql in [reference] if isinstance(reference, str) else reference:
+            found.append((grader["name"], sql))
+        if grader.get("check_sql"):
+            found.append((f"{grader['name']} (check)", grader["check_sql"]))
+    return found
+
+
+DOCUMENTED = _documented_examples()
+GRADERS = _grader_queries()
+
+
+class TestCatalogExamples:
+    """What the catalog tells an agent to run has to run — here, not only in a live tier."""
+
+    @pytest.mark.parametrize(
+        "example", json.loads(worker._EXECUTABLE_EXAMPLES), ids=lambda example: example["name"]
+    )
+    def test_executable_examples_hold(self, con: Any, example: dict[str, Any]) -> None:
+        assert [list(row) for row in rows(con, example["sql"])] == example["expected_result"]
+
+    @pytest.mark.parametrize(
+        "sql", [sql for _label, sql in DOCUMENTED], ids=[label for label, _sql in DOCUMENTED]
+    )
+    def test_documented_examples_run(self, con: Any, sql: str) -> None:
+        rows(con, sql)
+
+    @pytest.mark.parametrize("sql", [sql for _name, sql in GRADERS], ids=[name for name, _sql in GRADERS])
+    def test_agent_reference_queries_run(self, con: Any, sql: str) -> None:
+        rows(con, sql)

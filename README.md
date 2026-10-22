@@ -286,8 +286,11 @@ name in one schema.
 | `key_events(property)` | events counted as key events (formerly conversions) |
 
 `dimensions('0')` / `metrics('0')` list the universal set every property shares.
-The four configuration functions accept `''` to walk **every** readable property;
-their `property_id` column says where each row came from.
+Every other function accepts `''` in place of a property id to cover **every**
+readable property, one after another; its `property_id` column says where each
+row came from, and `WHERE property_id = '...'` (or `IN`) visits only those
+properties. The property is always a literal: DuckDB does not accept a subquery
+as a table-function argument, which is what `''` is for.
 
 Every object carries catalog documentation — descriptions, column comments,
 categorised examples — readable from `duckdb_functions()`, `duckdb_tables()` and
@@ -324,10 +327,27 @@ result is typed and a misspelling fails immediately, with suggestions:
 | metric of type `TYPE_INTEGER` | `BIGINT` |
 | any other metric (rates, durations, currency, distances) | `DOUBLE` |
 
-Columns are named exactly as requested. Custom definitions contain a colon and
+A `property_id` column comes first, then the dimensions in the order requested,
+then the metrics. Columns are named exactly as requested. Custom definitions contain a colon and
 need double quotes: `SELECT "customEvent:plan_tier" FROM ga4.report(...)`.
 Values GA4 cannot express in a typed column — `(other)` in a `date` column, for
 instance — become `NULL` rather than failing the query.
+
+### Every property at once
+
+`ga4.report('', ...)` runs the same report on every property the credential can
+read and concatenates the results:
+
+```sql
+SELECT property_id, sum(sessions) AS sessions
+FROM ga4.report('', dimensions => ['date'], metrics => ['sessions'], start_date => '7daysAgo')
+GROUP BY property_id ORDER BY sessions DESC;
+```
+
+Columns are then typed from the universal metadata, so custom definitions need
+a named property. Each property reports in its own time zone and currency,
+`max_rows` caps the whole scan, and a property whose data the credential cannot
+read is skipped.
 
 ### Dates
 
@@ -412,7 +432,8 @@ dimensions such as `country`, `city`, `deviceCategory`, `platform`,
 `eventName`, `unifiedScreenName`, `streamName`, `audienceName` and
 `minutesAgo` (a `BIGINT`, 0 = this minute); metrics `activeUsers`,
 `eventCount`, `keyEvents` and `screenPageViews`. `minutes_ago_start` /
-`minutes_ago_end` narrow the window. Results are never cached.
+`minutes_ago_end` narrow the window. Results are never cached. As with
+`report()`, `''` asks every readable property and a `property_id` column comes first.
 
 ## Configuration
 

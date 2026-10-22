@@ -71,6 +71,12 @@ from the current directory — run it from the repo root or the waivers vanish.
   `--allow-adc` (`auth.permit_adc`), because ATTACH options are client-chosen.
   The entry point also restricts browser OAuth to stdio (`oauth.permit_local`).
   Overriding an API URL must keep disabling ADC (`Settings.may_use_adc`).
+- **Property-scoped functions take `''` for every property.** A function whose
+  first argument is a property id also accepts `''`, walks the readable
+  properties one per tick (`admin.current_property` / `next_property` over a
+  `FanoutState` or `ReportState`), stamps `property_id` on every row, and visits
+  only the properties a pushed `WHERE property_id = / IN` names. A refusing
+  property (403/404) is skipped only in that walk; a 400 always fails.
 - **PEP-723 headers mirror pyproject.** `ga4_worker.py` and `serve.py` must list
   the same runtime deps at the same lower bounds (`tests/test_packaging.py`).
   Bump both together.
@@ -82,8 +88,11 @@ from the current directory — run it from the repo root or the waivers vanish.
    `description`, `categories`, `required_secrets = REQUIRED_SECRETS`, pushdown
    flags, `tags = docs(...)` (llm + md + `example_queries`, `result_schema` or
    `vgi.result_dynamic_columns_md`), and `examples` (each also present, with a
-   description, in the tag). Examples use `common.ANY_PROPERTY`, never a literal
-   property id, so they run against any credential.
+   description, in the tag). Examples pass `''` (every readable property) or
+   `'0'` (the universal metadata), never a literal property id, so they run
+   against any credential. Never a subquery: DuckDB rejects one as a
+   table-function argument. `TestCatalogExamples` runs every example and
+   grader query against the fake.
 3. Register in the module's `*_FUNCTIONS` list.
 4. Add a public task (`name`, `prompt`) to `_AGENT_TEST_TASKS` in `worker.py`
    **and** its grader to `vgi-agent-tests.yaml` (same name, same order).

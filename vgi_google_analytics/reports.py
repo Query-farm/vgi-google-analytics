@@ -17,6 +17,12 @@ dates) and a misspelled name fails at bind with suggestions rather than at the
 API. Rows stream one API page per ``process()`` tick, offset-paged, so a
 ``LIMIT`` stops early and a large report never sits in memory whole.
 
+Pass ``''`` instead of a property id to run the same report on every property
+the credential can read, one property after another; the leading
+``property_id`` column says whose each row is, and ``WHERE property_id = ...``
+visits only the properties it names. Columns are then typed from the standard
+metadata every property shares, so custom definitions need a named property.
+
 The aggregation happens in GA4, not DuckDB — this matters. ``totalUsers`` over
 ``['date']`` and summed in SQL is *not* the number of users over the range,
 because a user active on two days is counted on both. Ask GA4 for the
@@ -27,7 +33,8 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Annotated, Any
 
 import pyarrow as pa
@@ -39,8 +46,9 @@ from vgi_rpc import ArrowSerializableDataclass
 from vgi_rpc.rpc import OutputCollector
 
 from vgi_google_analytics import ga_api
-from vgi_google_analytics.common import ANY_PROPERTY, REQUIRED_SECRETS, emit, session
-from vgi_google_analytics.meta import docs, examples
+from vgi_google_analytics.admin import current_property, next_property, skippable
+from vgi_google_analytics.common import REQUIRED_SECRETS, FanoutState, emit, session
+from vgi_google_analytics.meta import docs, examples, field
 from vgi_google_analytics.pushdown import build_filtered, dimension_filters
 from vgi_google_analytics.settings import MAX_PAGE_SIZE
 from vgi_google_analytics.types import (
@@ -61,6 +69,21 @@ _DATE_DOC = "a GA4 date: an ISO date, today, yesterday, or NdaysAgo (such as 28d
 #: values of the ``dateRange`` column.
 CURRENT_RANGE = "current"
 COMPARISON_RANGE = "comparison"
+
+
+#: The first column of every report: which property the row came from.
+PROPERTY_ID_FIELD = field(
+    "property_id",
+    pa.string(),
+    "Property the row belongs to: the property argument, or each readable property in turn when it is ''.",
+)
+
+#: The property argument of the report functions.
+_PROPERTY_DOC = "GA4 property id, e.g. '123456789'; '' runs the report on every readable property."
+
+
+def _with_property(schema: pa.Schema) -> pa.Schema:
+    return schema.insert(0, PROPERTY_ID_FIELD)
 
 
 def _list_arg(name: str, doc: str) -> Arg[list[str]]:
@@ -108,7 +131,7 @@ def _and(expressions: list[dict[str, Any]]) -> dict[str, Any] | None:
 class ReportArgs:
     """Arguments of ``report()``; everything but the property is named."""
 
-    property: Annotated[str, Arg(0, doc="GA4 property id, e.g. '123456789'.")]
+    property: Annotated[str, Arg(0, doc=_PROPERTY_DOC)]
     dimensions: Annotated[
         list[str],
         _list_arg(
@@ -116,13 +139,13 @@ class ReportArgs:
             "Dimension api names to group by, each becoming a column; search dimensions(property) "
             "for valid names.",
         ),
-    ] = field(default_factory=list)
+    ] = dataclass_field(default_factory=list)
     metrics: Annotated[
         list[str],
         _list_arg(
             "metrics", "Metric api names to aggregate, each becoming a column; search metrics(property)."
         ),
-    ] = field(default_factory=list)
+    ] = dataclass_field(default_factory=list)
     start_date: Annotated[
         str,
         Arg(
@@ -207,18 +230,23 @@ class ReportArgs:
 
 @dataclass(kw_only=True)
 class ReportState(ArrowSerializableDataclass):
-    """Offset paging through one report.
+    """Offset paging through a report, one property at a time.
 
     ``request_json`` freezes the request built on the first tick. Pushed
     filters are refreshed before every tick, and an offset is only meaningful
     against the query that produced it — continuing with a different filter
-    would silently skip or repeat rows.
+    would silently skip or repeat rows. ``targets_json`` is the queue of
+    properties still to run (one, unless the property argument is ``''``);
+    ``offset`` belongs to its head, ``emitted`` to the whole scan.
     """
 
     offset: int = 0
     emitted: int = 0
     done: bool = False
     request_json: str = ""
+    targets_json: str = ""
+    started: bool = False
+    fanout: bool = False
 
 
 def _comparison(args: ReportArgs) -> bool:
@@ -300,6 +328,10 @@ def report_rows(response: dict[str, Any], dimensions: list[str], metrics: list[s
 #: The shape of report(), which depends on its arguments.
 REPORT_COLUMNS_MD = (
     "Columns follow the arguments, in this order.\n\n"
+    "#### Always first\n\n"
+    "| Name | Type | Description |\n"
+    "|---|---|---|\n"
+    "| `property_id` | VARCHAR | Property the row belongs to. |\n\n"
     "#### One column per requested dimension\n\n"
     "| Name | Type | Description |\n"
     "|---|---|---|\n"
@@ -325,6 +357,10 @@ REPORT_COLUMNS_MD = (
 
 REALTIME_COLUMNS_MD = (
     "Columns follow the arguments, in this order.\n\n"
+    "#### Always first\n\n"
+    "| Name | Type | Description |\n"
+    "|---|---|---|\n"
+    "| `property_id` | VARCHAR | Property the row belongs to. |\n\n"
     "#### One column per requested dimension\n\n"
     "| Name | Type | Description |\n"
     "|---|---|---|\n"
@@ -344,7 +380,9 @@ _REPORT_DOCS = docs(
         "Run a GA4 report: one row per combination of the requested `dimensions`, with the "
         "requested `metrics` aggregated by Google over the date range (default: the last 28 "
         "complete days). This is the function for almost every traffic, engagement, acquisition "
-        "or ecommerce question. Pass the property id from `account_summaries`. Find valid names "
+        "or ecommerce question. Pass the property id from `account_summaries` as a literal, or '' "
+        "to run the report on every readable property (the property_id column says whose each "
+        "row is; custom definitions then need a named property). Find valid names "
         "with `dimensions(property)` and `metrics(property)`; custom definitions are "
         "'customEvent:<param>'. Columns are named exactly as requested — quote names containing "
         "a colon. GA4 does the aggregation: never SUM a user-count metric (totalUsers, "
@@ -355,7 +393,8 @@ _REPORT_DOCS = docs(
     md=(
         "The GA4 Data API's `runReport`, as a table.\n\n"
         "### Shape\n\n"
-        "One column per requested dimension, in order, then one per metric. Metrics are "
+        "`property_id` first, then one column per requested dimension, in order, then one per "
+        "metric. Metrics are "
         "`BIGINT` when GA4 declares them integers and `DOUBLE` otherwise (rates, durations, "
         "currency). `date`/`firstSessionDate` are `DATE`; `dateHour`/`dateHourMinute` are "
         "`TIMESTAMP` in the property's time zone; other dimensions are `VARCHAR`.\n\n"
@@ -363,6 +402,14 @@ _REPORT_DOCS = docs(
         "`start_date` and `end_date` take `YYYY-MM-DD`, `today`, `yesterday` or `NdaysAgo`, "
         "inclusive, in the property's reporting time zone. Today's data is incomplete for up "
         "to a day or two while GA4 processes it.\n\n"
+        "### Every property at once\n\n"
+        "The property is a literal argument — DuckDB does not accept a subquery there. Pass "
+        "`''` to run the same report on every property the credential can read, one after "
+        "another; `WHERE property_id = '...'` (or `IN`) runs it on only those. Columns are "
+        "then typed from the standard metadata every property shares, so a custom definition "
+        "needs a named property. Each property reports in its own time zone and currency, and "
+        "`max_rows` caps the rows of the whole scan. A property whose data the credential "
+        "cannot read is skipped.\n\n"
         "### Comparing two periods\n\n"
         "Set `compare_start_date`/`compare_end_date` and a `dateRange` column is added, "
         "reading `current` or `comparison`, so period-over-period is a `PIVOT` or a self-join "
@@ -391,29 +438,29 @@ _REPORT_DOCS = docs(
     ),
     example_queries=examples(
         (
-            "Daily active users and sessions over the last 28 days",
-            "SELECT date, activeUsers, sessions FROM ga4.main.report("
-            f"{ANY_PROPERTY}, dimensions => ['date'], metrics => ['activeUsers', 'sessions']) "
-            "ORDER BY date",
+            "Daily active users and sessions over the last 28 days, per property",
+            "SELECT property_id, date, activeUsers, sessions FROM ga4.main.report("
+            "'', dimensions => ['date'], metrics => ['activeUsers', 'sessions']) "
+            "ORDER BY property_id, date",
         ),
         (
-            "Sessions and key events by channel",
-            "SELECT sessionDefaultChannelGroup, sessions, keyEvents FROM ga4.main.report("
-            f"{ANY_PROPERTY}, dimensions => ['sessionDefaultChannelGroup'], "
-            "metrics => ['sessions', 'keyEvents']) ORDER BY sessions DESC",
+            "Sessions and key events by channel, per property",
+            "SELECT property_id, sessionDefaultChannelGroup, sessions, keyEvents FROM ga4.main.report("
+            "'', dimensions => ['sessionDefaultChannelGroup'], "
+            "metrics => ['sessions', 'keyEvents']) ORDER BY property_id, sessions DESC",
         ),
         (
             "Top pages last week against the week before",
-            "SELECT pagePath, dateRange, screenPageViews FROM ga4.main.report("
-            f"{ANY_PROPERTY}, dimensions => ['pagePath'], metrics => ['screenPageViews'], "
+            "SELECT property_id, pagePath, dateRange, screenPageViews FROM ga4.main.report("
+            "'', dimensions => ['pagePath'], metrics => ['screenPageViews'], "
             "start_date => '7daysAgo', end_date => 'yesterday', "
             "compare_start_date => '14daysAgo', compare_end_date => '8daysAgo') "
             "ORDER BY screenPageViews DESC LIMIT 20",
         ),
         (
             "Purchase events by country, filtering on a dimension that is not a column",
-            "SELECT country, eventCount FROM ga4.main.report("
-            f"{ANY_PROPERTY}, dimensions => ['country'], metrics => ['eventCount'], "
+            "SELECT property_id, country, eventCount FROM ga4.main.report("
+            "'', dimensions => ['country'], metrics => ['eventCount'], "
             'dimension_filter => \'{"filter": {"fieldName": "eventName", '
             '"stringFilter": {"value": "purchase"}}}\') ORDER BY eventCount DESC',
         ),
@@ -439,11 +486,11 @@ class ReportFunction(TableFunctionGenerator[ReportArgs, ReportState]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT date, activeUsers, sessions FROM ga4.main.report("
-                    f"{ANY_PROPERTY}, dimensions => ['date'], metrics => ['activeUsers', 'sessions']) "
-                    "ORDER BY date"
+                    "SELECT property_id, date, activeUsers, sessions FROM ga4.main.report("
+                    "'', dimensions => ['date'], metrics => ['activeUsers', 'sessions']) "
+                    "ORDER BY property_id, date"
                 ),
-                description="Daily active users and sessions over the last 28 days",
+                description="Daily active users and sessions over the last 28 days, per property",
             ),
         ]
 
@@ -451,19 +498,29 @@ class ReportFunction(TableFunctionGenerator[ReportArgs, ReportState]):
     def on_bind(cls, params: BindParams[ReportArgs]) -> BindResponse:
         """Validate the request and type every column against the property's metadata."""
         args = params.args
-        prop = ga_api.property_id(args.property)
+        every = not args.property.strip()
+        # '' types against the universal metadata: the fields every property shares.
+        prop = "0" if every else ga_api.property_id(args.property)
         build_report_request(args, [])  # dates, filters and comparison pairing fail here, not mid-scan
         if args.max_rows < 0:
             raise ValueError("max_rows must be 0 (no limit) or positive")
         catalogue = Catalogue.from_metadata(ga_api.metadata(prop, session(params)))
-        schema = report_schema(
-            list(args.dimensions),
-            list(args.metrics),
-            catalogue,
-            date_range_column=_comparison(args),
-            quality_columns=args.quality_columns,
-        )
-        return BindResponse(output_schema=schema)
+        try:
+            schema = report_schema(
+                list(args.dimensions),
+                list(args.metrics),
+                catalogue,
+                date_range_column=_comparison(args),
+                quality_columns=args.quality_columns,
+            )
+        except ValueError as exc:
+            if not every:
+                raise
+            raise ValueError(
+                f"{exc} With '' (every property) only the standard fields every property shares "
+                "are available; pass a property id to use its custom definitions."
+            ) from None
+        return BindResponse(output_schema=_with_property(schema))
 
     @classmethod
     def initial_state(cls, params: ProcessParams[ReportArgs]) -> ReportState:
@@ -472,9 +529,13 @@ class ReportFunction(TableFunctionGenerator[ReportArgs, ReportState]):
 
     @classmethod
     def process(cls, params: ProcessParams[ReportArgs], state: ReportState, out: OutputCollector) -> None:
-        """Fetch and emit one page of the report."""
+        """Fetch and emit one page of one property's report."""
         args = params.args
         if state.done:
+            out.finish()
+            return
+        prop = current_property(params, args.property, state)
+        if prop is None:
             out.finish()
             return
         if not state.request_json:
@@ -493,17 +554,23 @@ class ReportFunction(TableFunctionGenerator[ReportArgs, ReportState]):
             page = min(page, args.max_rows - state.emitted)
         body["offset"] = state.offset
         body["limit"] = page
-        response = ga_api.run_report(args.property, body, sess)
+        try:
+            response = ga_api.run_report(prop, body, sess)
+        except ga_api.GoogleAnalyticsError as exc:
+            if not skippable(state, prop, exc):
+                raise
+            response = {}
         rows = report_rows(response, list(args.dimensions), list(args.metrics))
+        for row in rows:
+            row["property_id"] = prop
         total = int(response.get("rowCount") or 0)
         state.offset += len(rows)
         state.emitted += len(rows)
-        state.done = (
-            not rows
-            or len(rows) < page
-            or state.offset >= total
-            or (args.max_rows > 0 and state.emitted >= args.max_rows)
-        )
+        if args.max_rows > 0 and state.emitted >= args.max_rows:
+            state.done = True
+        elif not rows or len(rows) < page or state.offset >= total:
+            state.offset = 0
+            next_property(state)
         emit(out, build_filtered(params, rows), args.cache_ttl)
 
 
@@ -516,7 +583,7 @@ class ReportFunction(TableFunctionGenerator[ReportArgs, ReportState]):
 class RealtimeArgs:
     """Arguments of ``realtime_report()``."""
 
-    property: Annotated[str, Arg(0, doc="GA4 property id, e.g. '123456789'.")]
+    property: Annotated[str, Arg(0, doc=_PROPERTY_DOC)]
     dimensions: Annotated[
         list[str],
         _list_arg(
@@ -524,13 +591,13 @@ class RealtimeArgs:
             "Realtime dimension api names to group by (the realtime schema, not report()'s); "
             "see the function docs.",
         ),
-    ] = field(default_factory=list)
+    ] = dataclass_field(default_factory=list)
     metrics: Annotated[
         list[str],
         _list_arg(
             "metrics", "Realtime metric api names to aggregate; the function docs list the realtime set."
         ),
-    ] = field(default_factory=list)
+    ] = dataclass_field(default_factory=list)
     minutes_ago_start: Annotated[
         int,
         Arg(
@@ -580,7 +647,7 @@ def build_realtime_request(args: RealtimeArgs, pushed: list[dict[str, Any]]) -> 
 
 
 @init_single_worker
-class RealtimeReportFunction(TableFunctionGenerator[RealtimeArgs, None]):
+class RealtimeReportFunction(TableFunctionGenerator[RealtimeArgs, FanoutState]):
     """``runRealtimeReport``: activity in the last 30 minutes."""
 
     class Meta:
@@ -600,7 +667,8 @@ class RealtimeReportFunction(TableFunctionGenerator[RealtimeArgs, None]):
                 "the site now' and live monitoring; use report() for anything historical. The "
                 "realtime API has its own, smaller set of dimensions and metrics — country, "
                 "city, deviceCategory, platform, eventName, unifiedScreenName, minutesAgo, "
-                "streamName, audienceName; activeUsers, eventCount, keyEvents, screenPageViews."
+                "streamName, audienceName; activeUsers, eventCount, keyEvents, screenPageViews. "
+                "Pass a property id as a literal, or '' for every readable property."
             ),
             md=(
                 "The Data API's `runRealtimeReport`.\n\n"
@@ -611,54 +679,77 @@ class RealtimeReportFunction(TableFunctionGenerator[RealtimeArgs, None]):
                 "### Window\n\n"
                 "`minutes_ago_start => 4, minutes_ago_end => 0` is the last five minutes. "
                 "Standard properties can look back 29 minutes, GA4 360 properties 59.\n\n"
+                "### Every property at once\n\n"
+                "Pass `''` to ask every readable property, one after another; `property_id` says "
+                "whose each row is, and `WHERE property_id = ...` asks only those.\n\n"
                 "Results are never cached — they would be stale by the time they were reused."
             ),
             example_queries=examples(
                 (
-                    "Active users right now, by country",
-                    "SELECT country, activeUsers FROM ga4.main.realtime_report("
-                    f"{ANY_PROPERTY}, dimensions => ['country'], metrics => ['activeUsers']) "
+                    "Active users right now, by property and country",
+                    "SELECT property_id, country, activeUsers FROM ga4.main.realtime_report("
+                    "'', dimensions => ['country'], metrics => ['activeUsers']) "
                     "ORDER BY activeUsers DESC",
                 ),
                 (
-                    "Events per minute over the last half hour",
-                    "SELECT minutesAgo, eventCount FROM ga4.main.realtime_report("
-                    f"{ANY_PROPERTY}, dimensions => ['minutesAgo'], metrics => ['eventCount']) "
-                    "ORDER BY minutesAgo",
+                    "Events per minute over the last half hour, per property",
+                    "SELECT property_id, minutesAgo, eventCount FROM ga4.main.realtime_report("
+                    "'', dimensions => ['minutesAgo'], metrics => ['eventCount']) "
+                    "ORDER BY property_id, minutesAgo",
                 ),
             ),
         )
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT country, activeUsers FROM ga4.main.realtime_report("
-                    f"{ANY_PROPERTY}, dimensions => ['country'], metrics => ['activeUsers']) "
+                    "SELECT property_id, country, activeUsers FROM ga4.main.realtime_report("
+                    "'', dimensions => ['country'], metrics => ['activeUsers']) "
                     "ORDER BY activeUsers DESC"
                 ),
-                description="Active users right now, by country",
+                description="Active users right now, by property and country",
             ),
         ]
 
     @classmethod
     def on_bind(cls, params: BindParams[RealtimeArgs]) -> BindResponse:
         """Validate the request and declare the schema (no network needed)."""
-        ga_api.property_id(params.args.property)
+        if params.args.property.strip():
+            ga_api.property_id(params.args.property)
         build_realtime_request(params.args, [])
         return BindResponse(
-            output_schema=realtime_schema(list(params.args.dimensions), list(params.args.metrics))
+            output_schema=_with_property(
+                realtime_schema(list(params.args.dimensions), list(params.args.metrics))
+            )
         )
 
     @classmethod
-    def process(cls, params: ProcessParams[RealtimeArgs], state: None, out: OutputCollector) -> None:
-        """Run the realtime report and emit it whole (it is bounded and unpaged)."""
+    def initial_state(cls, params: ProcessParams[RealtimeArgs]) -> FanoutState:
+        """Start before the first property."""
+        return FanoutState()
+
+    @classmethod
+    def process(cls, params: ProcessParams[RealtimeArgs], state: FanoutState, out: OutputCollector) -> None:
+        """Run one property's realtime report and emit it whole (it is bounded and unpaged)."""
         args = params.args
+        prop = None if state.done else current_property(params, args.property, state)
+        if prop is None:
+            out.finish()
+            return
         string_dimensions = [
             f.name for f in params.output_schema if f.name in args.dimensions and pa.types.is_string(f.type)
         ]
         body = build_realtime_request(args, dimension_filters(params, string_dimensions))
-        response = ga_api.run_realtime_report(args.property, body, session(params))
-        out.emit(build_filtered(params, report_rows(response, list(args.dimensions), list(args.metrics))))
-        out.finish()
+        try:
+            response = ga_api.run_realtime_report(prop, body, session(params))
+        except ga_api.GoogleAnalyticsError as exc:
+            if not skippable(state, prop, exc):
+                raise
+            response = {}
+        rows = report_rows(response, list(args.dimensions), list(args.metrics))
+        for row in rows:
+            row["property_id"] = prop
+        next_property(state)
+        out.emit(build_filtered(params, rows))
 
 
 REPORT_FUNCTIONS: list[type] = [ReportFunction, RealtimeReportFunction]

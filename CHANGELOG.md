@@ -16,8 +16,16 @@ All notable changes to this project are documented here. The format follows
   No credential files, OS keychain or token server. Query Farm supplies the
   app registration in `oauth_app.py`; end users configure nothing.
 
+- **Every property at once for reports.** `report()`, `realtime_report()`,
+  `check_compatibility()` and `property_quota()` accept `''` to run on every
+  readable property, one property per tick. `WHERE property_id = ...` / `IN`
+  visits only the named properties, for these and for the four configuration
+  functions.
+
 ### Changed
 
+- `report()`, `realtime_report()` and `check_compatibility()` gain a leading
+  `property_id` column.
 - Upgraded to `vgi-python` 0.45 and `vgi-rpc` 0.52. `vgi-python` is held below
   0.46, which needs wire protocol 2.2, until Haybarn's pinned engine speaks it.
 - Browser sign-in is disabled on every shared transport (`--http`, `--tcp`,
@@ -25,6 +33,13 @@ All notable changes to this project are documented here. The format follows
   whichever entry point started them.
 - OAuth mode rejects `data_api_url` / `admin_api_url` overrides, so a Google
   token is only ever sent to Google.
+
+### Fixed
+
+- Catalog examples, executable examples and agent graders passed the property
+  as a scalar subquery, which DuckDB rejects as a table-function argument, so
+  none of them ran. They now use `''`, and the offline suite executes every one
+  against the fake.
 
 ## 0.1.0
 

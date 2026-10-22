@@ -54,6 +54,12 @@ DIMENSIONS = [
     ("eventName", "Event name", "The name of the event.", "Event"),
     ("deviceCategory", "Device category", "Desktop, tablet or mobile.", "Platform / device"),
     ("landingPage", "Landing page", "The page path of the first pageview in a session.", "Page / screen"),
+    (
+        "pagePath",
+        "Page path",
+        "The portion of the URL between the hostname and query string.",
+        "Page / screen",
+    ),
 ]
 METRICS = [
     ("activeUsers", "Active users", "Distinct users who visited.", "TYPE_INTEGER", "User"),
@@ -61,6 +67,7 @@ METRICS = [
     ("sessions", "Sessions", "Number of sessions.", "TYPE_INTEGER", "Session"),
     ("eventCount", "Event count", "Number of events.", "TYPE_INTEGER", "Event"),
     ("keyEvents", "Key events", "Number of key events.", "TYPE_INTEGER", "Event"),
+    ("screenPageViews", "Views", "Pages and app screens viewed.", "TYPE_INTEGER", "Page / screen"),
     ("engagementRate", "Engagement rate", "Engaged sessions / sessions.", "TYPE_FLOAT", "Session"),
     ("totalRevenue", "Total revenue", "Revenue from purchases.", "TYPE_CURRENCY", "Revenue"),
 ]
@@ -88,11 +95,13 @@ def _facts() -> list[dict[str, Any]]:
                 "eventName": event,
                 "deviceCategory": device,
                 "landingPage": "/" if i % 3 else "/pricing",
+                "pagePath": ["/", "/pricing", "/docs"][i % 3],
                 "activeUsers": users,
                 "totalUsers": users,
                 "sessions": users + 1,
                 "eventCount": users * 3,
                 "keyEvents": users if event == "purchase" else 0,
+                "screenPageViews": users * 2 if event == "page_view" else 0,
                 "engagementRate": 0.5,
                 "totalRevenue": 9.99 * users if event == "purchase" else 0.0,
             }

@@ -41,6 +41,25 @@ def equality(params: ProcessParams[Any], column: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def discrete_strings(params: ProcessParams[Any], column: str) -> list[str] | None:
+    """The strings ``column`` is pinned to by ``=`` or ``IN``, or ``None`` when it is not pinned.
+
+    Used to visit only the properties a ``WHERE property_id ...`` names instead
+    of every readable one. Exact by construction: a row for any other value
+    could not have survived the predicate.
+    """
+    filters = _filters(params)
+    if filters is None:
+        return None
+    values = filters.get_column_values(column)
+    if values is None:
+        return None
+    found = values.to_pylist()
+    if not all(isinstance(value, str) for value in found):
+        return None
+    return list(dict.fromkeys(found))
+
+
 def dimension_filters(params: ProcessParams[Any], columns: Sequence[str]) -> list[dict[str, Any]]:
     """GA4 ``FilterExpression``s equivalent to pushed predicates on string dimensions.
 

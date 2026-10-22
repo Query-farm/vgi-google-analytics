@@ -5,8 +5,10 @@
 # answers. vgi-lint merges these graders back in by name; it finds this file
 # beside vgi-lint.toml. tests/test_catalog.py keeps the two lists in step.
 #
-# "My first property" is the subquery the catalog examples use — the first
-# property the credential can read — so every task runs against any account.
+# "My first property" is the readable property with the lowest id, so every
+# task runs against any account. DuckDB rejects a subquery as a table-function
+# argument, so the references pass '' (every property) and pick that property
+# with a WHERE, where a subquery is allowed.
 
 tasks:
 - name: find_properties
@@ -17,32 +19,33 @@ tasks:
   unordered: true
 - name: daily_users
   reference_sql: >-
-    SELECT date, activeUsers FROM ga4.main.report((SELECT property_id FROM ga4.main.account_summaries
-    WHERE property_id IS NOT NULL ORDER BY property_id LIMIT 1), dimensions => ['date'], metrics => ['activeUsers'],
-    start_date => '7daysAgo', end_date => 'yesterday') ORDER BY date
+    SELECT date, activeUsers FROM ga4.main.report('', dimensions => ['date'], metrics => ['activeUsers'],
+    start_date => '7daysAgo', end_date => 'yesterday') WHERE property_id = (SELECT min(property_id) FROM
+    ga4.main.account_summaries) ORDER BY date
   success_criteria: >-
     Uses report() with the date dimension and activeUsers metric over a 7-day range, taking the property
     id from account_summaries.
 - name: total_users_not_summed
   reference_sql: >-
-    SELECT totalUsers FROM ga4.main.report((SELECT property_id FROM ga4.main.account_summaries WHERE property_id
-    IS NOT NULL ORDER BY property_id LIMIT 1), metrics => ['totalUsers'])
+    SELECT totalUsers FROM ga4.main.report('', metrics => ['totalUsers']) WHERE property_id = (SELECT
+    min(property_id) FROM ga4.main.account_summaries)
   success_criteria: >-
     Requests totalUsers with no date dimension. Summing a daily totalUsers or activeUsers series is wrong
     — it double-counts returning users.
 - name: channel_breakdown
   reference_sql: >-
-    SELECT sessionDefaultChannelGroup, sessions FROM ga4.main.report((SELECT property_id FROM ga4.main.account_summaries
-    WHERE property_id IS NOT NULL ORDER BY property_id LIMIT 1), dimensions => ['sessionDefaultChannelGroup'],
-    metrics => ['sessions'], start_date => '30daysAgo', end_date => 'yesterday') ORDER BY sessions DESC
+    SELECT sessionDefaultChannelGroup, sessions FROM ga4.main.report('', dimensions =>
+    ['sessionDefaultChannelGroup'], metrics => ['sessions'], start_date => '30daysAgo', end_date =>
+    'yesterday') WHERE property_id = (SELECT min(property_id) FROM ga4.main.account_summaries) ORDER BY
+    sessions DESC
   success_criteria: Breaks sessions down by sessionDefaultChannelGroup (or a session source dimension).
   unordered: true
 - name: filter_on_hidden_dimension
   reference_sql: >-
-    SELECT country, eventCount FROM ga4.main.report((SELECT property_id FROM ga4.main.account_summaries
-    WHERE property_id IS NOT NULL ORDER BY property_id LIMIT 1), dimensions => ['country'], metrics =>
+    SELECT country, eventCount FROM ga4.main.report('', dimensions => ['country'], metrics =>
     ['eventCount'], dimension_filter => '{"filter": {"fieldName": "eventName", "stringFilter": {"value":
-    "purchase"}}}') ORDER BY eventCount DESC
+    "purchase"}}}') WHERE property_id = (SELECT min(property_id) FROM ga4.main.account_summaries) ORDER BY
+    eventCount DESC
   success_criteria: >-
     Restricts to eventName = 'purchase' — either via dimension_filter, or by adding eventName as a dimension
     and filtering in SQL — and breaks down by country.
@@ -54,13 +57,13 @@ tasks:
   unordered: true
 - name: right_now
   reference_sql: >-
-    SELECT activeUsers FROM ga4.main.realtime_report((SELECT property_id FROM ga4.main.account_summaries
-    WHERE property_id IS NOT NULL ORDER BY property_id LIMIT 1), metrics => ['activeUsers'])
+    SELECT activeUsers FROM ga4.main.realtime_report('', metrics => ['activeUsers']) WHERE property_id =
+    (SELECT min(property_id) FROM ga4.main.account_summaries)
   success_criteria: Uses realtime_report(), not report().
 - name: custom_dimension_names
   reference_sql: >-
-    SELECT api_name, display_name, scope FROM ga4.main.custom_dimensions((SELECT property_id FROM ga4.main.account_summaries
-    WHERE property_id IS NOT NULL ORDER BY property_id LIMIT 1))
+    SELECT api_name, display_name, scope FROM ga4.main.custom_dimensions('') WHERE property_id = (SELECT
+    min(property_id) FROM ga4.main.account_summaries)
   success_criteria: Reads custom_dimensions() and points at the api_name column.
   unordered: true
 - name: account_regions
@@ -83,15 +86,15 @@ tasks:
   unordered: true
 - name: valid_combination
   reference_sql: >-
-    SELECT api_name, compatibility FROM ga4.main.check_compatibility((SELECT property_id FROM ga4.main.account_summaries
-    WHERE property_id IS NOT NULL ORDER BY property_id LIMIT 1), dimensions => ['sessionSource'], metrics
-    => ['itemRevenue']) WHERE requested
+    SELECT api_name, compatibility FROM ga4.main.check_compatibility('', dimensions => ['sessionSource'],
+    metrics => ['itemRevenue']) WHERE requested AND property_id = (SELECT min(property_id) FROM
+    ga4.main.account_summaries)
   success_criteria: Uses check_compatibility() and reports whether both fields are COMPATIBLE.
   unordered: true
 - name: custom_metric_units
   reference_sql: >-
-    SELECT api_name, display_name, measurement_unit FROM ga4.main.custom_metrics((SELECT property_id FROM
-    ga4.main.account_summaries WHERE property_id IS NOT NULL ORDER BY property_id LIMIT 1))
+    SELECT api_name, display_name, measurement_unit FROM ga4.main.custom_metrics('') WHERE property_id =
+    (SELECT min(property_id) FROM ga4.main.account_summaries)
   success_criteria: Reads custom_metrics() including measurement_unit.
   unordered: true
 - name: measurement_id_lookup
@@ -101,8 +104,8 @@ tasks:
   unordered: true
 - name: conversion_events
   reference_sql: >-
-    SELECT event_name FROM ga4.main.key_events((SELECT property_id FROM ga4.main.account_summaries WHERE
-    property_id IS NOT NULL ORDER BY property_id LIMIT 1))
+    SELECT event_name FROM ga4.main.key_events('') WHERE property_id = (SELECT min(property_id) FROM
+    ga4.main.account_summaries)
   success_criteria: Uses key_events(), recognising that conversions are now called key events.
   unordered: true
 - name: revenue_metrics
@@ -112,6 +115,6 @@ tasks:
   unordered: true
 - name: quota_left
   reference_sql: >-
-    SELECT remaining FROM ga4.main.property_quota((SELECT property_id FROM ga4.main.account_summaries
-    WHERE property_id IS NOT NULL ORDER BY property_id LIMIT 1)) WHERE quota = 'tokensPerHour'
+    SELECT remaining FROM ga4.main.property_quota('') WHERE quota = 'tokensPerHour' AND property_id =
+    (SELECT min(property_id) FROM ga4.main.account_summaries)
   success_criteria: Uses property_quota() and reads tokensPerHour.

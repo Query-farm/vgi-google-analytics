@@ -405,6 +405,7 @@ METRIC_METADATA_SCHEMA = pa.schema(
 
 COMPATIBILITY_SCHEMA = pa.schema(
     [
+        field("property_id", pa.string(), "Property the compatibility was checked against."),
         field("kind", pa.string(), "'dimension' or 'metric'."),
         field("api_name", pa.string(), "Dimension or metric name."),
         field("ui_name", pa.string(), "Name shown in the GA4 interface."),

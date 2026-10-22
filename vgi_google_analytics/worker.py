@@ -29,7 +29,6 @@ from vgi_google_analytics.admin import (
     AllAccountSummariesFunction,
     AllPropertiesFunction,
 )
-from vgi_google_analytics.common import ANY_PROPERTY
 from vgi_google_analytics.discovery import DISCOVERY_FUNCTIONS
 from vgi_google_analytics.meta import column_comments, docs, examples, keywords
 from vgi_google_analytics.reports import REPORT_FUNCTIONS
@@ -48,15 +47,15 @@ _EXAMPLE_QUERIES = examples(
         "ORDER BY account_name, property_name",
     ),
     (
-        "Daily active users and sessions for the last 28 days",
-        "SELECT date, activeUsers, sessions FROM ga4.main.report("
-        f"{ANY_PROPERTY}, dimensions => ['date'], metrics => ['activeUsers', 'sessions']) ORDER BY date",
+        "Daily active users and sessions for the last 28 days, per property",
+        "SELECT property_id, date, activeUsers, sessions FROM ga4.main.report("
+        "'', dimensions => ['date'], metrics => ['activeUsers', 'sessions']) ORDER BY property_id, date",
     ),
     (
         "Sessions and key events by channel",
-        "SELECT sessionDefaultChannelGroup, sessions, keyEvents FROM ga4.main.report("
-        f"{ANY_PROPERTY}, dimensions => ['sessionDefaultChannelGroup'], "
-        "metrics => ['sessions', 'keyEvents']) ORDER BY sessions DESC",
+        "SELECT property_id, sessionDefaultChannelGroup, sessions, keyEvents FROM ga4.main.report("
+        "'', dimensions => ['sessionDefaultChannelGroup'], "
+        "metrics => ['sessions', 'keyEvents']) ORDER BY property_id, sessions DESC",
     ),
     (
         "Find the api name of a dimension by meaning",
@@ -64,8 +63,8 @@ _EXAMPLE_QUERIES = examples(
     ),
     (
         "Who is on the site right now, by country",
-        "SELECT country, activeUsers FROM ga4.main.realtime_report("
-        f"{ANY_PROPERTY}, dimensions => ['country'], metrics => ['activeUsers']) ORDER BY activeUsers DESC",
+        "SELECT property_id, country, activeUsers FROM ga4.main.realtime_report("
+        "'', dimensions => ['country'], metrics => ['activeUsers']) ORDER BY activeUsers DESC",
     ),
     (
         "Custom dimensions across every property",
@@ -104,7 +103,7 @@ _EXECUTABLE_EXAMPLES = json.dumps(
             "description": "A report's date column is a DATE and its count metric a BIGINT.",
             "sql": (
                 "SELECT typeof(date), typeof(activeUsers) FROM ga4.main.report("
-                f"{ANY_PROPERTY}, dimensions => ['date'], metrics => ['activeUsers'], "
+                "'', dimensions => ['date'], metrics => ['activeUsers'], "
                 "keep_empty_rows => true) LIMIT 1"
             ),
             "expected_result": [["DATE", "BIGINT"]],
@@ -114,7 +113,7 @@ _EXECUTABLE_EXAMPLES = json.dumps(
             "description": "max_rows caps the rows a report returns.",
             "sql": (
                 "SELECT count(*) <= 3 FROM ga4.main.report("
-                f"{ANY_PROPERTY}, dimensions => ['date'], metrics => ['activeUsers'], max_rows => 3)"
+                "'', dimensions => ['date'], metrics => ['activeUsers'], max_rows => 3)"
             ),
             "expected_result": [[True]],
         },
@@ -233,8 +232,9 @@ _DOC_LLM = (
     "it for website and app analytics: traffic, users, sessions, page views, acquisition "
     "channels, events, key events (conversions) and ecommerce revenue — historically by date "
     "range, or live over the last 30 minutes. Start with the `account_summaries` table to get a "
-    "numeric property id; that id is the first argument of `report()`, which takes lists of "
-    "`dimensions` and `metrics`. If unsure of a name, search `dimensions(property)` / "
+    "numeric property id; pass that id, as a literal, as the first argument of `report()`, which "
+    "takes lists of `dimensions` and `metrics` — or pass '' to cover every readable property, "
+    "told apart by the `property_id` column. If unsure of a name, search `dimensions(property)` / "
     "`metrics(property)`. Aggregation happens in GA4: never sum user counts across rows. "
     "Read-only; use local browser sign-in with ATTACH credentials 'oauth', a `google_analytics` "
     "secret, or permitted Application Default Credentials."
@@ -280,8 +280,9 @@ _CATALOG_TAGS = {
         "1. Take a numeric property id from the `account_summaries` table.\n"
         "2. Look up the exact dimension and metric names with `dimensions(id)` and "
         "`metrics(id)` (`'0'` lists the standard ones every property shares).\n"
-        "3. Pass the id and the names to `report()`. The schema's example queries show each "
-        "step.\n\n"
+        "3. Pass the id and the names to `report()` — or pass `''` to run it on every "
+        "property, told apart by the `property_id` column. The schema's example queries show "
+        "each step.\n\n"
         "### Credentials\n\n"
         "For a local stdio worker, ATTACH with `credentials 'oauth'` to sign in through your browser "
         "to Query Farm's Google OAuth app. Each attachment carries its refreshable grant in "
