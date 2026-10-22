@@ -59,7 +59,8 @@ jobs:
       # Structural tier only: it inspects the catalog without running a query,
       # so no credentials are needed. The behavioural tier executes every
       # example against real Google Analytics and runs in live.yml.
+      # Use the project's engine so the client and worker wire versions match.
       - name: vgi-lint (structural)
         run: >
-          uvx --no-sources --from vgi-lint-check==0.82.0 vgi-lint lint "uv run --no-sources ga4_worker.py"
+          uv run --no-sources --with vgi-lint-check==0.82.0 vgi-lint lint "uv run --no-sources ga4_worker.py"
           --no-execute --no-check-links --audit-waivers --fail-on warning

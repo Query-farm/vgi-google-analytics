@@ -1,10 +1,11 @@
 # /// script
 # requires-python = ">=3.13"
 # dependencies = [
-#     "vgi-python[http,haybarn]>=0.37.3",
-#     "vgi-rpc>=0.47.2",
+#     "vgi-python[http,haybarn]>=0.45.0,<0.46",
+#     "vgi-rpc>=0.52.0",
 #     "httpx>=0.27",
 #     "google-auth>=2.30",
+#     "oauthlib>=3.3.1",
 # ]
 # ///
 """HTTP entry point for the Google Analytics 4 VGI worker (``uv run serve.py --port 8000``).

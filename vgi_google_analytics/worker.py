@@ -22,7 +22,7 @@ from vgi.catalog import Catalog, ReadOnlyCatalogInterface, Schema
 from vgi.catalog.catalog_interface import AttachOpaqueData, CatalogAttachResult, CatalogInfo
 from vgi.catalog.descriptors import ForeignKeyDef, Table
 
-from vgi_google_analytics import __version__, auth, settings
+from vgi_google_analytics import __version__, auth, oauth, settings
 from vgi_google_analytics.admin import (
     ADMIN_FUNCTIONS,
     AllAccountsFunction,
@@ -236,7 +236,8 @@ _DOC_LLM = (
     "numeric property id; that id is the first argument of `report()`, which takes lists of "
     "`dimensions` and `metrics`. If unsure of a name, search `dimensions(property)` / "
     "`metrics(property)`. Aggregation happens in GA4: never sum user counts across rows. "
-    "Read-only; needs a `google_analytics` secret."
+    "Read-only; use local browser sign-in with ATTACH credentials 'oauth', a `google_analytics` "
+    "secret, or permitted Application Default Credentials."
 )
 
 _CATALOG_TAGS = {
@@ -282,8 +283,13 @@ _CATALOG_TAGS = {
         "3. Pass the id and the names to `report()`. The schema's example queries show each "
         "step.\n\n"
         "### Credentials\n\n"
+        "For a local stdio worker, ATTACH with `credentials 'oauth'` to sign in through your browser "
+        "to Query Farm's Google OAuth app. Each attachment carries its refreshable grant in "
+        "the client's opaque attach data, so authorization survives worker restarts. Treat "
+        "these bytes as credentials; do not log them. No Keychain, credential file or user "
+        "app setup is needed. A new ATTACH starts a new sign-in.\n\n"
         "A `google_analytics` secret holding a service-account key (the account added to the "
-        "property as a Viewer), or an OAuth client id, client secret and refresh token:\n\n"
+        "property as a Viewer), or an OAuth client id, client secret and refresh token also works:\n\n"
         "```sql\n"
         "CREATE SECRET ga (TYPE google_analytics, service_account_json '<key file contents>');\n"
         "```\n\n"
@@ -508,11 +514,19 @@ class GA4Catalog(ReadOnlyCatalogInterface):
         """
         validated = settings.Settings.from_options(options)
         result = super().catalog_attach(name=name, options=options, **kwargs)
+        if validated.credentials == settings.OAUTH:
+            validated = replace(validated, oauth_grant=oauth.authorize())
         return replace(
             result,
             attach_opaque_data=AttachOpaqueData(validated.encode()),
             attach_opaque_data_required=True,
         )
+
+    def catalog_detach(self, *, attach_opaque_data: AttachOpaqueData) -> None:
+        """Drop this worker's credential cache for the client's detached catalog."""
+        attached = settings.Settings.decode(attach_opaque_data)
+        if attached.credentials == settings.OAUTH:
+            oauth.forget(attached.oauth_grant)
 
     def catalogs(self) -> list[CatalogInfo]:
         """Advertise the single read-only GA4 catalog."""
@@ -536,7 +550,7 @@ class GA4Worker(Worker):
 
 def main() -> None:
     """Run the worker (stdio by default; pass ``--http`` for the HTTP server)."""
-    GA4Worker.main()
+    _run(http=False)
 
 
 #: Operator flag for the HTTP server: permit the Application Default Credentials fallback.
@@ -552,10 +566,17 @@ def main_http() -> None:
     the server. This is a command-line flag rather than an ATTACH option because
     ATTACH options are chosen by clients.
     """
+    _run(http=True)
+
+
+def _run(*, http: bool) -> None:
+    """Restrict local credentials for every shared transport, including direct CLI flags."""
     argv = sys.argv[1:]
-    auth.permit_adc(ALLOW_ADC_FLAG in argv)
+    shared = http or any(arg.split("=", maxsplit=1)[0] in {"--http", "--tcp", "--unix"} for arg in argv)
+    oauth.permit_local(not shared)
+    auth.permit_adc(not shared or ALLOW_ADC_FLAG in argv)
     argv = [arg for arg in argv if arg != ALLOW_ADC_FLAG]
-    if "--http" not in argv:
+    if http and "--http" not in argv:
         argv = ["--http", *argv]
     sys.argv = [sys.argv[0], *argv]
     GA4Worker.main()

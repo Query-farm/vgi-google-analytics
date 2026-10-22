@@ -340,8 +340,9 @@ def _application_default() -> Credentials:
 _NO_CREDENTIALS = (
     "no Google Analytics credentials: CREATE SECRET (TYPE google_analytics, "
     "service_account_json '<key file contents>') — or client_id/client_secret/refresh_token — "
-    "first. Locally you can instead run `gcloud auth application-default login "
-    f"--scopes={SCOPE},https://www.googleapis.com/auth/cloud-platform`."
+    "first. Locally you can instead ATTACH with credentials 'oauth' for browser sign-in, "
+    "or run `gcloud auth application-default login --client-id-file=<desktop-client.json> "
+    f"--scopes={SCOPE}`."
 )
 
 

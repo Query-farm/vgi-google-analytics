@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Browser sign-in.** `ATTACH ... (credentials 'oauth')` signs in through
+  Query Farm's shared Desktop OAuth app, with PKCE and a temporary loopback
+  callback. Each attachment gets its own login; its refreshable grant travels
+  in the client's opaque attach data, so any worker — including a replacement
+  after the signing-in worker exits, or with `POOL false` — can refresh it.
+  No credential files, OS keychain or token server. Query Farm supplies the
+  app registration in `oauth_app.py`; end users configure nothing.
+
+### Changed
+
+- Upgraded to `vgi-python` 0.45 and `vgi-rpc` 0.52. `vgi-python` is held below
+  0.46, which needs wire protocol 2.2, until Haybarn's pinned engine speaks it.
+- Browser sign-in is disabled on every shared transport (`--http`, `--tcp`,
+  `--unix`), and those transports fall back to ADC only with `--allow-adc`,
+  whichever entry point started them.
+- OAuth mode rejects `data_api_url` / `admin_api_url` overrides, so a Google
+  token is only ever sent to Google.
+
 ## 0.1.0
 
 First release: read-only Google Analytics 4 for DuckDB.

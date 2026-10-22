@@ -80,7 +80,7 @@ jobs:
       - name: vgi-lint (structural + behavioural)
         if: env.GA4_KEY != ''
         run: >
-          uvx --no-sources --from vgi-lint-check==0.82.0 vgi-lint lint "uv run --no-sources ga4_worker.py"
+          uv run --no-sources --with vgi-lint-check==0.82.0 vgi-lint lint "uv run --no-sources ga4_worker.py"
           --execute-concurrency 1 --no-check-links --audit-waivers --fail-on error
       - name: Remove the key
         if: always() && env.GA4_KEY != ''

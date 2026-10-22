@@ -1,8 +1,9 @@
 """Shared fixtures: hermetic process state, and the in-process fake GA4.
 
-The worker keeps three pieces of process-wide state — the HTTP connection
-pool, the credential cache and the metadata cache. Each is reset around every
-test so the order tests run in cannot decide whether they pass.
+The worker keeps four pieces of process-wide state — the HTTP connection
+pool, the credential cache, the OAuth credential cache and the metadata cache.
+Each is reset around every test so the order tests run in cannot decide whether
+they pass. Browser sign-in starts disabled, as it is on a shared transport.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import httpx
 import pytest
 
 from tests import fake_ga
-from vgi_google_analytics import auth, ga_api
+from vgi_google_analytics import auth, ga_api, oauth
 from vgi_google_analytics.settings import Settings
 
 FAKE_BASE = "http://fake.test"
@@ -23,14 +24,18 @@ FAKE_BASE = "http://fake.test"
 def _hermetic(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     """Reset process-wide caches, and never fall back to the developer's real ADC."""
     auth.permit_adc(False)
+    oauth.clear_cache()
+    oauth.permit_local(False)
     ga_api.use_transport(None)
     auth.reset_cache()
     ga_api.clear_metadata_cache()
     yield
+    oauth.clear_cache()
     ga_api.use_transport(None)
     auth.reset_cache()
     ga_api.clear_metadata_cache()
     auth.permit_adc(True)
+    oauth.permit_local(False)
 
 
 @pytest.fixture

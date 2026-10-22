@@ -11,7 +11,7 @@ The options are validated in ``catalog_attach`` and travel to every function as
 the catalog's attach bytes (``params.attach_opaque_data``), which is the only
 route an ATTACH-time choice has into a function body.
 
-Two options are security-relevant, because on a shared HTTP worker ATTACH
+Credential options are security-relevant, because on a shared HTTP worker ATTACH
 options are chosen by the *client*:
 
 * ``credentials => 'auto'`` may fall back to Application Default Credentials —
@@ -20,12 +20,17 @@ options are chosen by the *client*:
 * Overriding ``data_api_url`` / ``admin_api_url`` disables that fallback
   outright, so no client can point the worker at its own host and receive the
   worker's own token.
+* ``credentials => 'oauth'`` starts a local, in-memory Google login, explicitly
+  enabled only by the stdio entry point and only with Google's API endpoints.
+  The attach bytes carry the refreshable OAuth grant and must be treated as
+  credentials by the client. No worker process owns the lifetime of the grant.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+import re
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -43,7 +48,41 @@ MAX_PAGE_SIZE = 250_000
 
 AUTO = "auto"
 SECRET_ONLY = "secret"
-CREDENTIAL_MODES = (AUTO, SECRET_ONLY)
+OAUTH = "oauth"
+CREDENTIAL_MODES = (AUTO, SECRET_ONLY, OAUTH)
+
+
+@dataclass(frozen=True, slots=True)
+class OAuthGrant:
+    """Refreshable authorization carried privately in a client's attach bytes.
+
+    The versioned payload has no configurable scope or token endpoint. The
+    random attachment ID isolates credential caches even when Google returns
+    the same refresh token for two authorizations. Reprs never expose secrets.
+    """
+
+    attachment_id: str
+    client_id: str = field(repr=False)
+    client_secret: str = field(repr=False)
+    refresh_token: str = field(repr=False)
+    version: int = 1
+
+    @classmethod
+    def decode(cls, raw: Any) -> OAuthGrant:
+        """Validate an opaque grant without including its contents in errors."""
+        fields = {"version", "attachment_id", "client_id", "client_secret", "refresh_token"}
+        if (
+            not isinstance(raw, dict)
+            or set(raw) != fields
+            or type(raw.get("version")) is not int
+            or raw["version"] != 1
+            or any(not isinstance(raw[key], str) or not raw[key].strip() for key in fields - {"version"})
+            or not re.fullmatch(r"[0-9a-f]{32}", raw["attachment_id"])
+            or not re.fullmatch(r"[A-Za-z0-9_-]+\.apps\.googleusercontent\.com", raw["client_id"])
+        ):
+            raise ValueError("Invalid OAuth grant in attachment; detach and attach again to sign in")
+        return cls(**raw)
+
 
 OPTION_SPECS = [
     AttachOptionSpec(
@@ -51,7 +90,8 @@ OPTION_SPECS = [
         desc=(
             "Where credentials come from: 'auto' (default) uses the google_analytics secret and "
             "otherwise Application Default Credentials where the worker permits it; 'secret' "
-            "requires the secret and never falls back."
+            "requires the secret and never falls back; 'oauth' signs in locally through the browser "
+            "to Query Farm's app and carries refreshable credentials in the client's opaque attach data."
         ),
         type=pa.string(),
         default=AUTO,
@@ -91,6 +131,8 @@ class Settings:
     report_page_size: int = DEFAULT_REPORT_PAGE_SIZE
     data_api_url: str = DEFAULT_DATA_API_URL
     admin_api_url: str = DEFAULT_ADMIN_API_URL
+    # Internal credentials, never an ATTACH option or part of a diagnostic repr.
+    oauth_grant: OAuthGrant | None = field(default=None, repr=False)
 
     @property
     def custom_endpoints(self) -> bool:
@@ -123,15 +165,19 @@ class Settings:
             raise ValueError(
                 f"ATTACH option report_page_size => {size} must be between 1 and {MAX_PAGE_SIZE}"
             )
+        data_api_url = _base_url("data_api_url", options.get("data_api_url") or DEFAULT_DATA_API_URL)
+        admin_api_url = _base_url("admin_api_url", options.get("admin_api_url") or DEFAULT_ADMIN_API_URL)
+        if mode == OAUTH and (data_api_url, admin_api_url) != (DEFAULT_DATA_API_URL, DEFAULT_ADMIN_API_URL):
+            raise ValueError("OAuth login requires the standard Google Analytics API endpoints")
         return cls(
             credentials=mode,
             report_page_size=size,
-            data_api_url=_base_url("data_api_url", options.get("data_api_url") or DEFAULT_DATA_API_URL),
-            admin_api_url=_base_url("admin_api_url", options.get("admin_api_url") or DEFAULT_ADMIN_API_URL),
+            data_api_url=data_api_url,
+            admin_api_url=admin_api_url,
         )
 
     def encode(self) -> bytes:
-        """These settings as attach bytes."""
+        """These settings as attach bytes; OAuth bytes contain sensitive credentials."""
         return json.dumps(asdict(self), sort_keys=True).encode()
 
     @classmethod
@@ -140,7 +186,8 @@ class Settings:
 
         No bytes means no ATTACH (a direct call, a test). Bytes that do not
         parse mean an older client; both get the defaults, which are the
-        conservative choice — the real Google endpoints.
+        conservative choice — the real Google endpoints. An OAuth attachment
+        that does not decode is an error, never a silent fallback to ADC.
         """
         if not data:
             return cls()
@@ -151,9 +198,14 @@ class Settings:
         if not isinstance(raw, dict):
             return cls()
         try:
-            return cls.from_options(raw)
+            decoded = cls.from_options(raw)
         except (TypeError, ValueError):
+            if str(raw.get("credentials")).strip().lower() == OAUTH:
+                raise ValueError("Invalid OAuth attachment; detach and attach again") from None
             return cls()
+        if decoded.credentials == OAUTH:
+            decoded = replace(decoded, oauth_grant=OAuthGrant.decode(raw.get("oauth_grant")))
+        return decoded
 
 
 def _base_url(name: str, value: Any) -> str:

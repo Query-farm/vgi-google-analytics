@@ -86,16 +86,97 @@ extension. With stock DuckDB, `INSTALL vgi FROM community; LOAD vgi;` first.
 ## Credentials
 
 Every Google Analytics call needs an OAuth token; there is no anonymous access.
-Credentials are a DuckDB **secret** of type `google_analytics`, never an ATTACH
-option — ATTACH strings show up in `duckdb_databases()` and in statement logs.
-Every credential-bearing field is marked redacted, so `duckdb_secrets()` masks
-it. The secret's *name* does not matter; the worker finds it by type.
+For local use, ATTACH opens a browser to sign in to Query Farm's Google OAuth
+app. Each attachment carries its own authorization in the client's opaque
+attach data. For HTTP deployments or supplied credentials, use a DuckDB
+**secret** of type `google_analytics` — never an ATTACH option, because ATTACH
+strings show up in `duckdb_databases()` and in statement logs. Every
+credential-bearing field is marked redacted, so `duckdb_secrets()` masks it.
+The secret's *name* does not matter; the worker finds it by type.
+
+### Sign in to Query Farm's Google app (local)
+
+Query Farm registers one OAuth application and distributes its Desktop app
+client registration with the worker. Each user signs in with their own Google
+account. Users do not create a Google Cloud project or configure client credentials.
+
+From the project directory:
+
+```sql
+ATTACH 'ga4' (TYPE vgi, LOCATION 'uv run ga4_worker.py', credentials 'oauth');
+SELECT * FROM ga4.account_summaries;
+```
+
+ATTACH opens Google's account chooser. Choose an account with access to your
+GA4 properties and approve read-only access. ATTACH completes when sign-in
+succeeds. A login attempt times out after three minutes; rerun ATTACH to retry.
+
+Each attachment has an independent login. ATTACH returns its refreshable OAuth
+grant in VGI's `attach_opaque_data`, which the client retains and supplies to
+subsequent worker calls. Each worker can obtain and refresh its own access token,
+so queries continue after the worker that performed sign-in exits, including
+with `POOL false`. The worker uses no Keychain or credential files for browser
+sign-in and no background token server.
+
+**The opaque attach data contains credentials, including the refresh token.**
+It is not encrypted by this worker. Clients must treat it as a secret: keep it
+out of logs, diagnostics and ordinary SQL options, and protect any storage if
+they choose to persist it. The local SQL flow retains it for the attachment;
+this does not automatically remember the login after the SQL application exits.
+A new ATTACH starts a new sign-in. Google's browser session may make that quicker.
+
+Workers keep a bounded in-memory credential cache to reuse access tokens. A
+detach RPC evicts this worker's cache entry; the current native extension does
+not send that RPC on SQL DETACH. DETACH removes the SQL catalog, but cannot
+revoke credentials already copied into other workers or clients. Worker exit
+clears its cache without invalidating the client's grant. Google's token
+validity and revocation determine whether a retained grant can still refresh.
+
+For two Google accounts, attach twice and choose the appropriate account in
+each browser flow:
+
+```sql
+ATTACH 'ga4' AS work_ga4 (
+    TYPE vgi, LOCATION 'uv run ga4_worker.py', credentials 'oauth'
+);
+ATTACH 'ga4' AS personal_ga4 (
+    TYPE vgi, LOCATION 'uv run ga4_worker.py', credentials 'oauth'
+);
+
+-- Remove only the work catalog from this SQL connection.
+DETACH work_ga4;
+```
+
+Only the browser authorization callback uses a temporary loopback listener;
+it closes when sign-in finishes. To revoke the app's authorization, use Google's
+connected-app settings. If a refresh token expires or is revoked, detach and
+attach again to sign in.
+
+Browser sign-in currently supports **local stdio** workers, with the browser on
+the same computer. HTTP, TCP and Unix-socket workers require credentials supplied
+by their clients unless the operator explicitly enables ADC. OAuth mode also
+requires the standard Google API endpoints, so `data_api_url` and
+`admin_api_url` cannot be overridden with it.
+
+**Query Farm setup (publisher only):** this checkout includes Query Farm's
+Desktop OAuth client registration in `vgi_google_analytics/oauth_app.py` — the
+same registration the Search Console worker uses. Its Google Cloud project must
+have the *Google Analytics Data API* and *Google Analytics Admin API* enabled,
+and its consent screen must list the `analytics.readonly` scope for the
+intended audience. During testing, add participating Google accounts as test
+users. If replacing the registration, create a client of type **Desktop app**
+and update `CLIENT_ID` and `CLIENT_SECRET` in that module. Complete Google's
+applicable verification before a public rollout. Desktop client identifiers are
+public app configuration; never put user tokens in that module. See Google's
+[desktop OAuth documentation](https://developers.google.com/identity/protocols/oauth2/native-app).
+
+### Supplying credentials with a DuckDB secret
 
 Set **exactly one** of the following shapes. A secret that sets two is
 rejected rather than resolved by precedence, so it is never ambiguous which
 identity is reading your data.
 
-### Option 1 — a service account (recommended)
+### Option 1 — a service account (recommended for servers)
 
 Best for servers, schedules and CI: no user involved, nothing expires.
 
@@ -152,7 +233,8 @@ With no secret, and unless the catalog was attached with
 
 ```bash
 gcloud auth application-default login \
-  --scopes=https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform
+  --client-id-file=/path/to/desktop-oauth-client.json \
+  --scopes=https://www.googleapis.com/auth/analytics.readonly
 ```
 
 The **HTTP** server does *not* fall back: a shared server's ADC is the server's
@@ -449,9 +531,9 @@ ATTACH 'ga4' (TYPE vgi, LOCATION 'uv run ga4_worker.py',
 
 | Option | Default | Purpose |
 |---|---|---|
-| `credentials` | `'auto'` | `'auto'`: the secret, else Application Default Credentials where the worker permits it. `'secret'`: require the secret, never fall back. |
+| `credentials` | `'auto'` | `'auto'`: the secret, else Application Default Credentials where the worker permits it. `'secret'`: require the secret, never fall back. `'oauth'`: browser sign-in to Query Farm's app (local stdio only), with refreshable credentials in this attachment's opaque data. |
 | `report_page_size` | `100000` | Rows per `runReport` request, 1–250,000. Smaller pages reach DuckDB sooner. |
-| `data_api_url` | `https://analyticsdata.googleapis.com/v1beta` | Data API base URL, for a proxy or a test double. Overriding it disables the ADC fallback. |
+| `data_api_url` | `https://analyticsdata.googleapis.com/v1beta` | Data API base URL, for a proxy or a test double. Overriding it disables the ADC fallback and is rejected with `credentials 'oauth'`. |
 | `admin_api_url` | `https://analyticsadmin.googleapis.com/v1beta` | Admin API base URL, likewise. |
 
 The worker reads no environment variables of its own. The only ones that matter
@@ -467,7 +549,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy                               # strict
 uv run pytest                             # offline: unit + SQL end-to-end against a fake GA4
 uv run pytest -m live                     # against real Google Analytics (see below)
-uvx --from vgi-lint-check==0.82.0 vgi-lint lint "uv run --no-sources ga4_worker.py" \
+uv run --no-sources --with vgi-lint-check==0.82.0 vgi-lint lint "uv run --no-sources ga4_worker.py" \
     --no-execute --no-check-links --audit-waivers --fail-on warning
 ```
 
@@ -478,6 +560,9 @@ uvx --from vgi-lint-check==0.82.0 vgi-lint lint "uv run --no-sources ga4_worker.
 |---|---|
 | `ga_api.py` | The only module that touches the network: allow-list, auth headers, retries, errors |
 | `auth.py` | The `google_analytics` secret type; credential parsing, caching, ADC fallback |
+| `oauth.py` | Query Farm browser sign-in, portable OAuth grants and per-worker credential caching |
+| `oauth_app.py` | Query Farm's shared Desktop OAuth app registration |
+| `settings.py` | ATTACH options: validation and the ADC safety rules |
 | `admin.py` | Accounts, properties, streams, custom definitions, key events |
 | `discovery.py` | `dimensions`, `metrics`, `check_compatibility`, `property_quota` |
 | `reports.py` | `report` and `realtime_report` |
@@ -491,10 +576,11 @@ uvx --from vgi-lint-check==0.82.0 vgi-lint lint "uv run --no-sources ga4_worker.
 
 Three tiers, all under `tests/`:
 
-- **Unit** (`test_auth`, `test_ga_api`, `test_shapes`, `test_catalog`,
-  `test_packaging`, `test_readonly_guard`) — pure functions, the HTTP chokepoint
-  via `httpx.MockTransport`, metadata completeness, PEP-723 header drift, and
-  the read-only guarantees.
+- **Unit** (`test_auth`, `test_oauth`, `test_ga_api`, `test_shapes`,
+  `test_catalog`, `test_packaging`, `test_readonly_guard`) — pure functions,
+  browser sign-in and portable grants (including a real ATTACH through
+  replacement workers), the HTTP chokepoint via `httpx.MockTransport`, metadata
+  completeness, PEP-723 header drift, and the read-only guarantees.
 - **End-to-end SQL, offline** (`test_end_to_end`) — the real worker subprocess
   attached from DuckDB, talking over a socket to `tests/fake_ga.py`, a
   deterministic stand-in for both APIs. Covers binding, typing, secrets, filter

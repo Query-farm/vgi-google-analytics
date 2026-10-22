@@ -9,9 +9,9 @@ from vgi.arguments import SecretLookupEntry
 from vgi.cache_control import CacheControl
 from vgi_rpc import ArrowSerializableDataclass
 
-from vgi_google_analytics import auth
+from vgi_google_analytics import auth, oauth
 from vgi_google_analytics.ga_api import Session
-from vgi_google_analytics.settings import Settings
+from vgi_google_analytics.settings import OAUTH, Settings
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -45,11 +45,14 @@ def session(params: Any) -> Session:
     """This call's credentials and its catalog's ATTACH settings.
 
     Settings arrive as the catalog's attach bytes; credentials come from the
-    call's secrets, or from Application Default Credentials when the settings
-    and the operator both allow it.
+    attachment's portable OAuth grant, the call's secrets, or Application Default
+    Credentials when the settings and the operator both allow it.
     """
     settings = Settings.decode(getattr(params, "attach_opaque_data", None))
-    creds = auth.resolve(getattr(params, "secrets", None), allow_adc=settings.may_use_adc)
+    if settings.credentials == OAUTH:
+        creds = oauth.credentials(settings.oauth_grant)
+    else:
+        creds = auth.resolve(getattr(params, "secrets", None), allow_adc=settings.may_use_adc)
     return Session(credentials=creds, settings=settings)
 
 
