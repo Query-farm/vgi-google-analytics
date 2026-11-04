@@ -487,7 +487,10 @@ def test_oauth_grant_works_through_real_sql_attach(tmp_path: Path, pool: bool) -
     events = tmp_path / "worker_events.txt"
     with fake_ga.serve() as url:
         launcher = tmp_path / "oauth_worker.py"
-        launcher.write_text(f"""
+        header = (root / "ga4_worker.py").read_text().split("# ///\n", maxsplit=1)[0] + "# ///\n"
+        launcher.write_text(
+            header
+            + f"""
 import json
 import os
 import sys
@@ -511,11 +514,12 @@ def refresh(self, *args, **kwargs):
     }}).encode())
 ga_api.AuthTransport.__call__ = refresh
 worker.main()
-""")
+"""
+        )
         with haybarn.connect() as con:
             for name in ("work_ga4", "personal_ga4"):
                 con.execute(
-                    f"ATTACH 'ga4' AS {name} (TYPE vgi, LOCATION '{sys.executable} {launcher}', "
+                    f"ATTACH 'ga4' AS {name} (TYPE vgi, LOCATION 'uv run --exact --no-project {launcher}', "
                     f"credentials 'oauth', data_api_url '{url}/data/v1beta', "
                     f"admin_api_url '{url}/admin/v1beta', POOL {str(pool).lower()}, CACHE false)"
                 )

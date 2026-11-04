@@ -13,7 +13,6 @@ The live counterpart, against real Google Analytics, is ``test_live.py``.
 from __future__ import annotations
 
 import json
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -39,7 +38,8 @@ def attach_sql(url: str, **extra: Any) -> str:
         **extra,
     }
     rendered = ", ".join(f"{k} {v!r}" if isinstance(v, str) else f"{k} {v}" for k, v in options.items())
-    return f"ATTACH 'ga4' (TYPE vgi, LOCATION '{sys.executable} {ROOT / 'ga4_worker.py'}', {rendered})"
+    location = f"uv run --exact --no-project {ROOT / 'ga4_worker.py'}"
+    return f"ATTACH 'ga4' (TYPE vgi, LOCATION '{location}', {rendered})"
 
 
 @pytest.fixture(scope="module")
@@ -75,6 +75,37 @@ def _clear_log() -> None:
 
 
 class TestDiscovery:
+    def test_table_constraints_are_visible_to_sql(self, con: Any) -> None:
+        assert rows(
+            con,
+            "SELECT table_name, constraint_type, constraint_column_names, "
+            "referenced_table, referenced_column_names FROM duckdb_constraints() "
+            "WHERE database_name = 'ga4' ORDER BY table_name, constraint_type, constraint_column_names",
+        ) == [
+            ("account_summaries", "FOREIGN KEY", ["account_id"], "accounts", ["account_id"]),
+            ("account_summaries", "FOREIGN KEY", ["property_id"], "properties", ["property_id"]),
+            ("account_summaries", "NOT NULL", ["account_id"], None, []),
+            ("account_summaries", "UNIQUE", ["account_id", "property_id"], None, []),
+            ("accounts", "NOT NULL", ["account_id"], None, []),
+            ("accounts", "PRIMARY KEY", ["account_id"], None, []),
+            ("properties", "FOREIGN KEY", ["account_id"], "accounts", ["account_id"]),
+            ("properties", "NOT NULL", ["account_id"], None, []),
+            ("properties", "NOT NULL", ["property_id"], None, []),
+            ("properties", "PRIMARY KEY", ["property_id"], None, []),
+        ]
+
+    def test_required_columns_are_non_nullable(self, con: Any) -> None:
+        assert rows(
+            con,
+            "SELECT table_name, column_name FROM duckdb_columns() "
+            "WHERE database_name = 'ga4' AND NOT is_nullable ORDER BY table_name, column_name",
+        ) == [
+            ("account_summaries", "account_id"),
+            ("accounts", "account_id"),
+            ("properties", "account_id"),
+            ("properties", "property_id"),
+        ]
+
     def test_account_summaries(self, con: Any) -> None:
         got = rows(con, "SELECT account_id, property_id FROM ga4.main.account_summaries ORDER BY ALL")
         assert got == [("5001", "1001"), ("5001", "1002"), ("5002", None)]
@@ -345,11 +376,10 @@ class TestAttachOptions:
     def test_a_bad_option_fails_the_attach(self, fake_url: str, option: str, message: str) -> None:
         haybarn = pytest.importorskip("haybarn")
         connection = haybarn.connect()
+        location = f"uv run --exact --no-project {ROOT / 'ga4_worker.py'}"
         try:
             with pytest.raises(Exception, match=message):
-                connection.execute(
-                    f"ATTACH 'ga4' (TYPE vgi, LOCATION '{sys.executable} {ROOT / 'ga4_worker.py'}', {option})"
-                )
+                connection.execute(f"ATTACH 'ga4' (TYPE vgi, LOCATION '{location}', {option})")
         finally:
             connection.close()
 

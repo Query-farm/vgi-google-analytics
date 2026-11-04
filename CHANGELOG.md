@@ -30,8 +30,11 @@ All notable changes to this project are documented here. The format follows
   the SQL session completes the credential exchange.
 - `report()`, `realtime_report()` and `check_compatibility()` gain a leading
   `property_id` column.
-- Upgraded to `vgi-python` 0.45 and `vgi-rpc` 0.52. `vgi-python` is held below
-  0.46, which needs wire protocol 2.2, until Haybarn's pinned engine speaks it.
+- Upgraded to `vgi-python` 0.48.2 and `vgi-rpc` 0.52.4, with canonical VGI 3
+  table constraints. Clients now need a VGI 3 extension (Haybarn 2.0.0rc11 or
+  newer). Workers use DuckDB 1.5.5 for the SDK's pinned filter-evaluation
+  profile; SQL tests launch isolated workers from their PEP-723 headers.
+- Updated the SQL test client to Haybarn 2.0.0rc11 and `vgi-lint-check` to 2.0.0.
 - Browser sign-in is disabled on every shared transport (`--http`, `--tcp`,
   `--unix`), and those transports fall back to ADC only with `--allow-adc`,
   whichever entry point started them.

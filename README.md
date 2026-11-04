@@ -80,8 +80,10 @@ ATTACH 'ga4' (TYPE vgi,
   LOCATION 'uvx --from git+https://github.com/Query-farm/vgi-google-analytics@v0.1.0 vgi-google-analytics');
 ```
 
-[Haybarn](https://query.farm), Query Farm's DuckDB distribution, ships the `vgi`
-extension. With stock DuckDB, `INSTALL vgi FROM community; LOAD vgi;` first.
+[Haybarn](https://query.farm) 2.0.0rc11 or newer ships the compatible `vgi.v3`
+extension. The client and worker must both use VGI 3; older VGI 2 extensions
+cannot attach this worker. The worker uses a separate DuckDB 1.5.5 environment
+for filter evaluation, provisioned automatically by the script headers or `uvx`.
 
 ## Credentials
 
@@ -570,7 +572,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy                               # strict
 uv run pytest                             # offline: unit + SQL end-to-end against a fake GA4
 uv run pytest -m live                     # against real Google Analytics (see below)
-uv run --no-sources --with vgi-lint-check==0.82.0 vgi-lint lint "uv run --no-sources ga4_worker.py" \
+uv run --no-sources --with vgi-lint-check==2.0.0 vgi-lint lint "uv run --no-sources ga4_worker.py" \
     --no-execute --no-check-links --audit-waivers --fail-on warning
 ```
 

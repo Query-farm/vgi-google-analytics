@@ -18,9 +18,9 @@ from dataclasses import replace
 from typing import Any
 
 from vgi import Worker
-from vgi.catalog import Catalog, ReadOnlyCatalogInterface, Schema
+from vgi.catalog import Catalog, ReadOnlyCatalogInterface, ReferencedKey, Schema, constraint_record
 from vgi.catalog.catalog_interface import AttachOpaqueData, CatalogAttachResult, CatalogInfo
-from vgi.catalog.descriptors import ForeignKeyDef, Table
+from vgi.catalog.descriptors import Table
 
 from vgi_google_analytics import __version__, auth, oauth, settings
 from vgi_google_analytics.admin import (
@@ -452,18 +452,54 @@ _GA4_CATALOG = Catalog(
                     comment="Every readable GA4 property with its account — the entry point",
                     tags=_SUMMARIES_DOCS,
                     column_comments=column_comments(ACCOUNT_SUMMARY_SCHEMA),
-                    not_null=("account_id",),
-                    unique=(("account_id", "property_id"),),
-                    foreign_key=(
-                        ForeignKeyDef(
-                            columns=("account_id",),
-                            referenced_table="accounts",
-                            referenced_columns=("account_id",),
+                    constraints=(
+                        constraint_record(
+                            ["main"],
+                            "account_summaries",
+                            "account_id_not_null",
+                            "NOT_NULL",
+                            [["account_id"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
                         ),
-                        ForeignKeyDef(
-                            columns=("property_id",),
-                            referenced_table="properties",
-                            referenced_columns=("property_id",),
+                        constraint_record(
+                            ["main"],
+                            "account_summaries",
+                            "account_property_unique",
+                            "UNIQUE",
+                            [["account_id"], ["property_id"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                        ),
+                        constraint_record(
+                            ["main"],
+                            "account_summaries",
+                            "account_fk",
+                            "FOREIGN_KEY",
+                            [["account_id"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                            references=ReferencedKey(
+                                schema_path=["main"],
+                                table="accounts",
+                                columns=[["account_id"]],
+                                constraint_id="pk",
+                            ),
+                        ),
+                        constraint_record(
+                            ["main"],
+                            "account_summaries",
+                            "property_fk",
+                            "FOREIGN_KEY",
+                            [["property_id"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                            references=ReferencedKey(
+                                schema_path=["main"],
+                                table="properties",
+                                columns=[["property_id"]],
+                                constraint_id="pk",
+                            ),
                         ),
                     ),
                 ),
@@ -473,8 +509,26 @@ _GA4_CATALOG = Catalog(
                     comment="Every readable Google Analytics account",
                     tags=_ACCOUNTS_DOCS,
                     column_comments=column_comments(ACCOUNT_SCHEMA),
-                    primary_key=(("account_id",),),
-                    not_null=("account_id",),
+                    constraints=(
+                        constraint_record(
+                            ["main"],
+                            "accounts",
+                            "account_id_not_null",
+                            "NOT_NULL",
+                            [["account_id"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                        ),
+                        constraint_record(
+                            ["main"],
+                            "accounts",
+                            "pk",
+                            "PRIMARY_KEY",
+                            [["account_id"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                        ),
+                    ),
                 ),
                 Table(
                     name="properties",
@@ -482,13 +536,48 @@ _GA4_CATALOG = Catalog(
                     comment="Every readable GA4 property with its time zone, currency and service level",
                     tags=_PROPERTIES_DOCS,
                     column_comments=column_comments(PROPERTY_SCHEMA),
-                    primary_key=(("property_id",),),
-                    not_null=("property_id", "account_id"),
-                    foreign_key=(
-                        ForeignKeyDef(
-                            columns=("account_id",),
-                            referenced_table="accounts",
-                            referenced_columns=("account_id",),
+                    constraints=(
+                        constraint_record(
+                            ["main"],
+                            "properties",
+                            "property_id_not_null",
+                            "NOT_NULL",
+                            [["property_id"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                        ),
+                        constraint_record(
+                            ["main"],
+                            "properties",
+                            "pk",
+                            "PRIMARY_KEY",
+                            [["property_id"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                        ),
+                        constraint_record(
+                            ["main"],
+                            "properties",
+                            "account_id_not_null",
+                            "NOT_NULL",
+                            [["account_id"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                        ),
+                        constraint_record(
+                            ["main"],
+                            "properties",
+                            "account_fk",
+                            "FOREIGN_KEY",
+                            [["account_id"]],
+                            enforcement="ENFORCED",
+                            validation="ALL_ROWS",
+                            references=ReferencedKey(
+                                schema_path=["main"],
+                                table="accounts",
+                                columns=[["account_id"]],
+                                constraint_id="pk",
+                            ),
                         ),
                     ),
                 ),

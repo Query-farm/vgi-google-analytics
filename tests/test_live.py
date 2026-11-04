@@ -16,7 +16,6 @@ volume — so the suite can run against a quiet test property.
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -43,7 +42,7 @@ def con() -> Iterator[Any]:
     mode = "secret" if (service_account or token) else "auto"
     connection = haybarn.connect()
     try:
-        location = f"{sys.executable} {ROOT / 'ga4_worker.py'}"
+        location = f"uv run --exact --no-project {ROOT / 'ga4_worker.py'}"
         connection.execute(f"ATTACH 'ga4' (TYPE vgi, LOCATION '{location}', credentials '{mode}')")
         if service_account:
             connection.execute(
