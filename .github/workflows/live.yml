@@ -44,7 +44,7 @@ jobs:
         with:
           enable-cache: true
       - if: env.VGI_GA4_TEST_SERVICE_ACCOUNT_JSON != ''
-        run: uv sync --no-sources --frozen
+        run: uv sync --no-sources --locked
       - name: Live tests
         if: env.VGI_GA4_TEST_SERVICE_ACCOUNT_JSON != ''
         run: uv run --no-sources pytest -q -m live
@@ -67,7 +67,7 @@ jobs:
         with:
           enable-cache: true
       - if: env.GA4_KEY != ''
-        run: uv sync --no-sources --frozen
+        run: uv sync --no-sources --locked
       # vgi-lint attaches the worker without a DuckDB secret, so the worker
       # authenticates through Application Default Credentials: the key is written
       # to a file and GOOGLE_APPLICATION_CREDENTIALS points at it.
