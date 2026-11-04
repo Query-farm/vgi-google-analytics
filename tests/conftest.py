@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
+import haybarn
 import httpx
 import pytest
 
@@ -18,6 +19,13 @@ from vgi_google_analytics import auth, ga_api, oauth
 from vgi_google_analytics.settings import Settings
 
 FAKE_BASE = "http://fake.test"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _install_vgi_extension() -> None:
+    """Provision the SQL client's extension once, including on a fresh CI runner."""
+    with haybarn.connect() as connection:
+        connection.execute("INSTALL vgi FROM community")
 
 
 @pytest.fixture(autouse=True)
