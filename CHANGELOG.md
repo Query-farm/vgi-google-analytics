@@ -24,6 +24,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Standardized the Google OAuth runtime, portable grant validation, credential
+  selection, and callback pages across Analytics and Search Console. Shared
+  files and policy tests have a sync command and a Search Console CI parity
+  check against the canonical Analytics source. Client registrations and
+  read-only scopes remain connector-specific.
+- Both workers reject obsolete `oauth_profile` / `oauth_reauth` options;
+  browser sign-in requires explicit `credentials 'oauth'`.
 - Browser sign-in responses use a self-contained Query Farm page with light
   and dark themes, connector-specific documentation, and distinct received,
   declined and invalid response states. Authorization receipt is shown before

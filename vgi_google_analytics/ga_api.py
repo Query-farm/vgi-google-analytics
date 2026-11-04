@@ -1,8 +1,8 @@
 """Read-only HTTP access to the Google Analytics Data and Admin APIs.
 
-This module is the **only** place in the package that touches the network, and
-the only one that imports ``httpx``; ``tests/test_readonly_guard.py`` holds it
-to both. Every request goes through :func:`_call`, which enforces an allow-list
+This module is the **only** place in the package that makes upstream HTTP
+requests or imports ``httpx``; ``tests/test_readonly_guard.py`` enforces this.
+Every API request goes through :func:`_call`, which enforces an allow-list
 rather than trusting call sites:
 
 * ``GET`` — the Admin API's list/get endpoints and the Data API's metadata.
@@ -25,23 +25,19 @@ offline suite exercise the real request/response code.
 from __future__ import annotations
 
 import atexit
-import hmac
 import random
 import re
-import socket
 import threading
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, cast
-from urllib.parse import parse_qs, urlsplit
+from typing import Any
 
 import httpx
 from google.auth.exceptions import TransportError
 
 from vgi_google_analytics.auth import Credentials
-from vgi_google_analytics.oauth_page import CONTENT_SECURITY_POLICY, Outcome, render_page
+from vgi_google_analytics.oauth_callback import OAuthCallback as _OAuthCallback
 from vgi_google_analytics.settings import MAX_PAGE_SIZE, Settings
 
 #: The Data API RPCs that are reads despite being POSTs. Nothing else may POST.
@@ -238,90 +234,11 @@ class AuthTransport:
 _AUTH_TRANSPORT = AuthTransport()
 
 
-class OAuthCallback(HTTPServer):
-    """A short-lived loopback listener for a desktop OAuth authorization code.
-
-    It accepts only the expected callback path, Host and random state. It never
-    logs the URL, which contains the authorization code, or reflects input in
-    the browser response. The caller owns it with a ``with`` statement.
-    """
-
-    allow_reuse_address = False
+class OAuthCallback(_OAuthCallback):
+    """Use the shared loopback listener with this connector's browser page."""
 
     def __init__(self, state: str) -> None:
-        self.state = state
-        self.code = ""
-        self.denied = False
-        super().__init__(("127.0.0.1", 0), _OAuthCallbackHandler)
-        self.timeout = 0.25
-
-    @property
-    def redirect_uri(self) -> str:
-        """The loopback URL registered with this authorization request."""
-        return f"http://127.0.0.1:{self.server_port}/oauth/callback"
-
-    def get_request(self) -> tuple[socket.socket, Any]:
-        """Bound how long an incomplete HTTP request can hold the listener."""
-        connection, address = super().get_request()
-        connection.settimeout(1.0)
-        return connection, address
-
-    def wait(self, timeout: float) -> str:
-        """Wait for one matching response, or report denial / timeout."""
-        deadline = time.monotonic() + timeout
-        while not (self.code or self.denied):
-            if time.monotonic() >= deadline:
-                raise TimeoutError("Google sign-in timed out; run ATTACH again to retry")
-            self.handle_request()
-        if self.denied:
-            raise ValueError("Google sign-in was not approved; run ATTACH again to retry")
-        return self.code
-
-
-class _OAuthCallbackHandler(BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args: Any) -> None:
-        """Keep callback URLs and authorization codes out of logs."""
-
-    def do_GET(self) -> None:
-        """Accept a code only when the path, host and state match this flow."""
-        server = cast(OAuthCallback, self.server)
-        try:
-            parts = urlsplit(self.path)
-            values = parse_qs(parts.query, keep_blank_values=True, max_num_fields=20)
-        except ValueError:
-            self._respond(400, "invalid")
-            return
-        states = values.get("state", [])
-        expected_host = f"127.0.0.1:{server.server_port}"
-        valid = (
-            parts.path == "/oauth/callback"
-            and not parts.scheme
-            and not parts.netloc
-            and self.headers.get("Host") == expected_host
-            and len(states) == 1
-            and hmac.compare_digest(states[0].encode(), server.state.encode())
-        )
-        codes, errors = values.get("code", []), values.get("error", [])
-        if valid and len(codes) == 1 and codes[0] and not errors:
-            server.code = codes[0]
-            self._respond(200, "received")
-        elif valid and len(errors) == 1 and errors[0] and not codes:
-            server.denied = True
-            self._respond(200, "denied")
-        else:
-            self._respond(400, "invalid")
-
-    def _respond(self, status: int, outcome: Outcome) -> None:
-        body = render_page("google-analytics", outcome)
-        self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        self.wfile.write(body)
+        super().__init__(state, "google-analytics")
 
 
 def _allowed(method: str, url: str, settings: Settings) -> bool:

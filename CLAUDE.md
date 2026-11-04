@@ -21,13 +21,14 @@ from the current directory — run it from the repo root or the waivers vanish.
 
 ## Invariants (each has a test)
 
-- **Only `ga_api.py` touches the network or imports `httpx`.** Every request
-  goes through `ga_api._call`, whose allow-list permits GET on the two API base
+- **Only `ga_api.py` makes upstream HTTP requests or imports `httpx`.**
+  Every API request goes through `ga_api._call`, whose allow-list permits GET on the two API base
   URLs and POST only to `READ_RPCS` (`runReport`, `runRealtimeReport`,
   `checkCompatibility`). Do not add a write RPC; the worker is read-only by
   design. google-auth's token refreshes go through `ga_api.AuthTransport`, so
   never import `google.auth.transport.requests`. Browser OAuth uses the same token
-  transport and a temporary loopback callback listener in `ga_api.OAuthCallback`.
+  transport and a temporary loopback callback listener in `oauth_callback.py`,
+  wrapped by `ga_api.OAuthCallback`.
   After sign-in there is no loopback token server; each worker refreshes the
   grant from the client's opaque attach data through `ga_api.AuthTransport`.
 - **Only the `analytics.readonly` scope.** Never request `analytics.edit` (that
@@ -106,10 +107,14 @@ from the current directory — run it from the repo root or the waivers vanish.
   embedded evaluator stays on the SDK-supported DuckDB 1.5.5. Temporary OAuth
   launchers copy the same header. The SDK prefers Haybarn when it is installed,
   but its filter profile rejects Haybarn 2.0 in the worker process.
-- `oauth_page.py` and `oauth_assets/` are the canonical shared sign-in design.
-  Copy both unchanged into `vgi-google-search-console/vgi_google_search_console/`
-  when updating them. Fonts and their licenses are bundled; no page assets are
-  fetched at runtime. The page confirms receipt, not a completed token exchange.
+- The shared OAuth runtime (`oauth.py`, `oauth_model.py`, `oauth_callback.py`),
+  browser presentation (`oauth_page.py`, `oauth_assets/`), and
+  `tests/test_oauth_policy.py` are canonical in `vgi-google-analytics`.
+  Change them there and run the sync command documented in README; use
+  `--check` to verify parity. Search Console CI compares against Analytics `main`, so publish the
+  canonical change first. Keep connector adapters, registrations, scopes and
+  API endpoint validation separate. Fonts and licenses are bundled; the page
+  confirms receipt, not a completed token exchange.
 - `tests/fake_ga.py` is a deterministic GA4 stand-in (fixed `TODAY`, synthetic
   fact table). `handle()` plugs into `httpx.MockTransport`; `serve()` runs it
   on a socket for the end-to-end tier, which ATTACHes the worker subprocess with
