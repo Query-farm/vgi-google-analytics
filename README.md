@@ -482,6 +482,12 @@ FROM ga4.report('123456789', dimensions => ['sessionDefaultChannelGroup'],
     metrics => ['totalRevenue'], currency_code => 'EUR')
 ORDER BY totalRevenue DESC;
 
+-- How often each key event fired, per property, over the last 28 days
+SELECT r.property_id, k.event_name, r.eventCount
+FROM ga4.report('', dimensions => ['eventName'], metrics => ['eventCount']) r
+JOIN ga4.key_events('') k ON k.property_id = r.property_id AND k.event_name = r.eventName
+ORDER BY r.property_id, r.eventCount DESC;
+
 -- Will this combination work before spending quota on it?
 SELECT kind, api_name, compatibility
 FROM ga4.check_compatibility('123456789', dimensions => ['itemName'], metrics => ['sessions'])

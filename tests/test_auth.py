@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
@@ -159,3 +160,13 @@ class TestSecretSpec:
             auth.REFRESH_TOKEN,
             auth.ACCESS_TOKEN,
         }
+
+    def test_every_field_is_documented_and_the_type_links_to_setup(self) -> None:
+        schema = auth.SECRET_SPEC.schema
+        assert all((f.metadata or {}).get(b"vgi_doc") for f in schema)
+        url = (schema.metadata or {})[b"vgi_doc_url"].decode()
+        assert url.startswith("https://github.com/Query-farm/vgi-google-analytics#")
+        anchor = url.rsplit("#", 1)[1]
+        readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+        headings = {line.lstrip("#").strip().lower().replace(" ", "-") for line in readme.splitlines()}
+        assert anchor in headings

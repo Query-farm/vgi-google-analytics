@@ -25,13 +25,15 @@ from vgi.catalog.descriptors import Table
 from vgi_google_analytics import __version__, auth, oauth, settings
 from vgi_google_analytics.admin import (
     ADMIN_FUNCTIONS,
+    KEY_EVENT_COUNTS_EXAMPLE,
+    STREAM_OWNERS_EXAMPLE,
     AllAccountsFunction,
     AllAccountSummariesFunction,
     AllPropertiesFunction,
 )
 from vgi_google_analytics.discovery import DISCOVERY_FUNCTIONS
 from vgi_google_analytics.meta import column_comments, docs, examples, keywords
-from vgi_google_analytics.reports import REPORT_FUNCTIONS
+from vgi_google_analytics.reports import REPORT_FUNCTIONS, REVENUE_WITH_CURRENCY_EXAMPLE
 from vgi_google_analytics.schemas import ACCOUNT_SCHEMA, ACCOUNT_SUMMARY_SCHEMA, PROPERTY_SCHEMA
 
 IMPLEMENTATION_VERSION = __version__
@@ -71,6 +73,9 @@ _EXAMPLE_QUERIES = examples(
         "SELECT property_id, api_name, display_name FROM ga4.main.custom_dimensions('') "
         "ORDER BY property_id, api_name",
     ),
+    REVENUE_WITH_CURRENCY_EXAMPLE,
+    KEY_EVENT_COUNTS_EXAMPLE,
+    STREAM_OWNERS_EXAMPLE,
 )
 
 #: Run by `vgi-lint --execute` against a live credential, so each must hold for
@@ -197,6 +202,14 @@ _AGENT_TEST_TASKS = json.dumps(
         {
             "name": "quota_left",
             "prompt": "How much GA4 Data API quota does my first property have left this hour?",
+        },
+        {
+            "name": "custom_dimensions_per_property",
+            "prompt": (
+                "How many custom dimensions does each of my GA4 properties define? Include properties "
+                "that define none, with a count of 0. Return three columns: property id, property "
+                "name, number of custom dimensions."
+            ),
         },
     ]
 )

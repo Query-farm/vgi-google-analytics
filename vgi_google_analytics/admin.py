@@ -686,6 +686,27 @@ class _PropertyListFunction(TableFunctionGenerator[PropertyArgs, ListState]):
         )
 
 
+#: Composed examples, shared with the schema-level example list in
+#: :mod:`vgi_google_analytics.worker`.
+#:
+#: A measurement id is what a site's tag shows; the account and property it
+#: reports into come from ``account_summaries``.
+STREAM_OWNERS_EXAMPLE = (
+    "Which account and property each website measurement id (G-...) reports into",
+    "SELECT d.measurement_id, d.default_uri, s.account_name, s.property_name, d.property_id "
+    "FROM ga4.main.data_streams('') d JOIN ga4.main.account_summaries s USING (property_id) "
+    "WHERE d.type = 'WEB_DATA_STREAM' ORDER BY s.account_name, s.property_name, d.measurement_id",
+)
+#: The keyEvents metric only gives a total; joining an eventName breakdown to
+#: ``key_events`` counts each key event on its own, using each property's own list.
+KEY_EVENT_COUNTS_EXAMPLE = (
+    "How many times each key event (conversion) fired in each property over the last 28 days",
+    "SELECT r.property_id, k.event_name, k.counting_method, r.eventCount "
+    "FROM ga4.main.report('', dimensions => ['eventName'], metrics => ['eventCount']) r "
+    "JOIN ga4.main.key_events('') k ON k.property_id = r.property_id AND k.event_name = r.eventName "
+    "ORDER BY r.property_id, r.eventCount DESC, k.event_name",
+)
+
 _ALL_PROPERTIES_NOTE = (
     "\n\n### Every property at once\n\n"
     "Pass `''` instead of a property id to walk every property the credential can read — the "
@@ -741,6 +762,7 @@ class DataStreamsFunction(_PropertyListFunction):
                     "SELECT property_id, stream_id, type, display_name FROM ga4.main.data_streams('') "
                     "ORDER BY property_id, stream_id",
                 ),
+                STREAM_OWNERS_EXAMPLE,
             ),
         )
         examples = [
@@ -921,6 +943,7 @@ class KeyEventsFunction(_PropertyListFunction):
                     "WHERE s.property_id IS NOT NULL AND s.property_id NOT IN ("
                     "SELECT property_id FROM ga4.main.key_events('') WHERE event_name = 'purchase')",
                 ),
+                KEY_EVENT_COUNTS_EXAMPLE,
             ),
         )
         examples = [

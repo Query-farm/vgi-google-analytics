@@ -373,6 +373,18 @@ REALTIME_COLUMNS_MD = (
     "| any other metric | DOUBLE | The metric's value. |"
 )
 
+#: Composed example: a report joined to the ``properties`` table, because a
+#: revenue figure is meaningless without the currency the property reports in.
+#: Shared with the schema-level example list in :mod:`vgi_google_analytics.worker`.
+REVENUE_WITH_CURRENCY_EXAMPLE = (
+    "Revenue and revenue per session over the last 28 days for each property, with the currency "
+    "that property reports revenue in",
+    "SELECT p.display_name, p.currency_code, r.sessions, round(r.totalRevenue, 2) AS revenue, "
+    "round(r.totalRevenue / nullif(r.sessions, 0), 2) AS revenue_per_session "
+    "FROM ga4.main.report('', metrics => ['sessions', 'totalRevenue']) r "
+    "JOIN ga4.main.properties p USING (property_id) ORDER BY revenue DESC, p.display_name",
+)
+
 _REPORT_DOCS = docs(
     category="reports",
     extra={"vgi.result_dynamic_columns_md": REPORT_COLUMNS_MD},
@@ -464,6 +476,7 @@ _REPORT_DOCS = docs(
             'dimension_filter => \'{"filter": {"fieldName": "eventName", '
             '"stringFilter": {"value": "purchase"}}}\') ORDER BY eventCount DESC',
         ),
+        REVENUE_WITH_CURRENCY_EXAMPLE,
     ),
 )
 
