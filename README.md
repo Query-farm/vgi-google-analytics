@@ -668,3 +668,7 @@ Analytics data belongs to the property owner and is accessed under the
 [Google Analytics Terms of Service](https://marketingplatform.google.com/about/analytics/terms/us/).
 Google Analytics is a trademark of Google LLC; this project is not affiliated
 with or endorsed by Google. See [NOTICE](NOTICE).
+
+## Executed notebook
+
+[Compare daily and period distinct-user counts with a synthetic local fixture](notebooks/README.md).

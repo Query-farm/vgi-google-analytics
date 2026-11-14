@@ -1,0 +1,191 @@
+{
+  "provenance": "Authored synthetic notebook events; no Google Analytics or visitor data",
+  "property_time_zone": "America/New_York",
+  "events": [
+    {
+      "event_id": "fixture-event-001",
+      "date": "2026-09-01",
+      "user": "synthetic-A"
+    },
+    {
+      "event_id": "fixture-event-002",
+      "date": "2026-09-01",
+      "user": "synthetic-A"
+    },
+    {
+      "event_id": "fixture-event-003",
+      "date": "2026-09-01",
+      "user": "synthetic-B"
+    },
+    {
+      "event_id": "fixture-event-004",
+      "date": "2026-09-01",
+      "user": "synthetic-B"
+    },
+    {
+      "event_id": "fixture-event-005",
+      "date": "2026-09-01",
+      "user": "synthetic-B"
+    },
+    {
+      "event_id": "fixture-event-006",
+      "date": "2026-09-01",
+      "user": "synthetic-C"
+    },
+    {
+      "event_id": "fixture-event-007",
+      "date": "2026-09-02",
+      "user": "synthetic-A"
+    },
+    {
+      "event_id": "fixture-event-008",
+      "date": "2026-09-02",
+      "user": "synthetic-A"
+    },
+    {
+      "event_id": "fixture-event-009",
+      "date": "2026-09-02",
+      "user": "synthetic-A"
+    },
+    {
+      "event_id": "fixture-event-010",
+      "date": "2026-09-02",
+      "user": "synthetic-B"
+    },
+    {
+      "event_id": "fixture-event-011",
+      "date": "2026-09-02",
+      "user": "synthetic-D"
+    },
+    {
+      "event_id": "fixture-event-012",
+      "date": "2026-09-02",
+      "user": "synthetic-D"
+    },
+    {
+      "event_id": "fixture-event-013",
+      "date": "2026-09-02",
+      "user": "synthetic-E"
+    },
+    {
+      "event_id": "fixture-event-014",
+      "date": "2026-09-02",
+      "user": "synthetic-E"
+    },
+    {
+      "event_id": "fixture-event-015",
+      "date": "2026-09-02",
+      "user": "synthetic-E"
+    },
+    {
+      "event_id": "fixture-event-016",
+      "date": "2026-09-03",
+      "user": "synthetic-A"
+    },
+    {
+      "event_id": "fixture-event-017",
+      "date": "2026-09-03",
+      "user": "synthetic-C"
+    },
+    {
+      "event_id": "fixture-event-018",
+      "date": "2026-09-03",
+      "user": "synthetic-C"
+    },
+    {
+      "event_id": "fixture-event-019",
+      "date": "2026-09-03",
+      "user": "synthetic-E"
+    },
+    {
+      "event_id": "fixture-event-020",
+      "date": "2026-09-03",
+      "user": "synthetic-E"
+    },
+    {
+      "event_id": "fixture-event-021",
+      "date": "2026-09-03",
+      "user": "synthetic-E"
+    },
+    {
+      "event_id": "fixture-event-022",
+      "date": "2026-09-03",
+      "user": "synthetic-F"
+    },
+    {
+      "event_id": "fixture-event-023",
+      "date": "2026-09-04",
+      "user": "synthetic-A"
+    },
+    {
+      "event_id": "fixture-event-024",
+      "date": "2026-09-04",
+      "user": "synthetic-A"
+    },
+    {
+      "event_id": "fixture-event-025",
+      "date": "2026-09-04",
+      "user": "synthetic-D"
+    },
+    {
+      "event_id": "fixture-event-026",
+      "date": "2026-09-04",
+      "user": "synthetic-D"
+    },
+    {
+      "event_id": "fixture-event-027",
+      "date": "2026-09-04",
+      "user": "synthetic-D"
+    },
+    {
+      "event_id": "fixture-event-028",
+      "date": "2026-09-04",
+      "user": "synthetic-G"
+    },
+    {
+      "event_id": "fixture-event-029",
+      "date": "2026-09-05",
+      "user": "synthetic-B"
+    },
+    {
+      "event_id": "fixture-event-030",
+      "date": "2026-09-05",
+      "user": "synthetic-B"
+    },
+    {
+      "event_id": "fixture-event-031",
+      "date": "2026-09-05",
+      "user": "synthetic-B"
+    },
+    {
+      "event_id": "fixture-event-032",
+      "date": "2026-09-05",
+      "user": "synthetic-C"
+    },
+    {
+      "event_id": "fixture-event-033",
+      "date": "2026-09-05",
+      "user": "synthetic-G"
+    },
+    {
+      "event_id": "fixture-event-034",
+      "date": "2026-09-05",
+      "user": "synthetic-G"
+    },
+    {
+      "event_id": "fixture-event-035",
+      "date": "2026-09-05",
+      "user": "synthetic-H"
+    },
+    {
+      "event_id": "fixture-event-036",
+      "date": "2026-09-05",
+      "user": "synthetic-H"
+    },
+    {
+      "event_id": "fixture-event-037",
+      "date": "2026-09-05",
+      "user": "synthetic-H"
+    }
+  ]
+}
