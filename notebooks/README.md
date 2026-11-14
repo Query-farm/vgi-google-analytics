@@ -45,3 +45,9 @@ Daily `totalUsers` counts user-days when summed; it is not the count of distinct
 Real reports require an authorized Google Analytics credential and accessible property. Follow the root README's documented secret or local OAuth flow, use Google's default API endpoints, and replace the synthetic property/metric selections deliberately. Do not reuse the fixture token or save real credentials or private report outputs in this notebook. The saved Run All workflow intentionally stays on the local synthetic API; it makes no claim of live Google validation.
 
 Official references: [metric definitions](https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema#metrics), [inclusive date ranges and property time zone](https://developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/DateRange). This walkthrough is a grouping and pagination lesson, not a traffic, retention or conversion estimate.
+
+The notebook creates its Haybarn connection with an empty temporary secret
+directory and persistent secrets disabled. Its visible SQL creates only a
+TEMPORARY dummy secret for the local fixture. Assertions check the initial empty
+inventory and absence of persistent secrets before cleanup. Existing saved SQL
+credentials are neither loaded nor modified.
