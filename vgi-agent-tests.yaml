@@ -124,8 +124,8 @@ tasks:
     LEFT JOIN ga4.main.custom_dimensions('') c USING (property_id) GROUP BY p.property_id, p.display_name
     ORDER BY p.property_id
   success_criteria: >-
-    Starts from every readable property (the properties table or account_summaries) and LEFT JOINs
-    custom_dimensions('') on property_id, counting matched rows so a property with none shows 0 rather
-    than being dropped or counted as 1.
+    Starts from every readable property (the properties table) and LEFT JOINs custom_dimensions('')
+    on property_id, counting matched rows so a property with none shows 0 rather than being dropped
+    or counted as 1.
   unordered: true
   ignore_column_names: true
