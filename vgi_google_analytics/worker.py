@@ -312,7 +312,20 @@ _CATALOG_TAGS = {
         "### Quota\n\n"
         "Every report spends Data API tokens from the property's hourly and daily budget. "
         "The quota function shows what remains, and a report's `cache_ttl` argument lets DuckDB "
-        "reuse an identical result instead of spending more."
+        "reuse an identical result instead of spending more.\n\n"
+        "### Sources and references\n\n"
+        "- [Google Analytics Data API](https://developers.google.com/analytics/devguides/reporting/data/v1) "
+        "— reports, realtime reports and metadata\n"
+        "- [API dimensions and metrics]"
+        "(https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema) — the names "
+        "`report()` accepts\n"
+        "- [Data API quotas](https://developers.google.com/analytics/devguides/reporting/data/v1/quotas) "
+        "— the token budgets the quota function reports\n"
+        "- [Google Analytics Admin API](https://developers.google.com/analytics/devguides/config/admin/v1) "
+        "— accounts, properties and data streams\n"
+        "- [Application Default Credentials]"
+        "(https://cloud.google.com/docs/authentication/application-default-credentials) "
+        "— the local credential fallback"
     ),
 }
 

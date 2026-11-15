@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 0.1.1 - 2026-11-14
+
+### Changed
+
+- Docs link to upstream: the catalog documentation now links the GA4 Data API,
+  its dimensions-and-metrics schema and quotas, the Admin API, and Application
+  Default Credentials (vgi-lint VGI183).
+
 ## 0.1.0 - 2026-11-14
 
 First release: read-only Google Analytics 4 for DuckDB.

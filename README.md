@@ -77,7 +77,7 @@ Pin a tag for a deployment, so the worker cannot change under you:
 
 ```sql
 ATTACH 'ga4' (TYPE vgi,
-  LOCATION 'uvx --from git+https://github.com/Query-farm/vgi-google-analytics@v0.1.0 vgi-google-analytics');
+  LOCATION 'uvx --from git+https://github.com/Query-farm/vgi-google-analytics@v0.1.1 vgi-google-analytics');
 ```
 
 [Haybarn](https://query.farm) 2.0.0rc11 or newer ships the compatible `vgi.v3`
