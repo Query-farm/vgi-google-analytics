@@ -1,0 +1,209 @@
+# name: test/sql/ga4_report.test
+# description: report() and realtime_report() against tests/fake_ga.py: types, paging, comparison, filters, every-property walks
+# group: [google_analytics]
+
+require vgi
+
+require-env VGI_GOOGLE_ANALYTICS_WORKER
+
+require-env VGI_GOOGLE_ANALYTICS_MOCK_API
+
+# Aimed at the offline fake through ATTACH options; report_page_size 10 makes a
+# modest synthetic report span several pages (and several process() ticks).
+statement ok
+ATTACH 'ga4' (TYPE vgi, LOCATION '{VGI_GOOGLE_ANALYTICS_WORKER}', data_api_url '{VGI_GOOGLE_ANALYTICS_MOCK_API}/data/v1beta', admin_api_url '{VGI_GOOGLE_ANALYTICS_MOCK_API}/admin/v1beta', report_page_size 10);
+
+# The fake accepts exactly this fixture token; it is not a Google credential.
+statement ok
+CREATE SECRET my_ga (TYPE google_analytics, access_token 'test-token');
+
+# ------------------------------------------------------------------ report()
+
+query TTTTT
+SELECT typeof(date), typeof(dateHour), typeof(country), typeof(activeUsers), typeof(engagementRate)
+FROM ga4.main.report('1001', dimensions => ['date', 'dateHour', 'country'], metrics => ['activeUsers', 'engagementRate'])
+LIMIT 1;
+----
+DATE	TIMESTAMP	VARCHAR	BIGINT	DOUBLE
+
+# The whole synthetic fact table, summed per day.
+query ITTI
+SELECT count(*), min(date), max(date), sum(sessions)
+FROM ga4.main.report('1001', dimensions => ['date'], metrics => ['sessions'], start_date => '2026-09-01', end_date => '2026-09-28');
+----
+28	2026-09-01	2026-09-28	5366
+
+# 672 rows at report_page_size 10: dozens of pages, none lost or repeated.
+query II
+SELECT count(*), count(DISTINCT dateHour)
+FROM ga4.main.report('1001', dimensions => ['dateHour'], metrics => ['activeUsers'], start_date => '2026-09-01');
+----
+672	672
+
+query I
+SELECT count(*) FROM (SELECT * FROM ga4.main.report('1001', dimensions => ['dateHour'], metrics => ['activeUsers'], start_date => '2026-09-01') LIMIT 3);
+----
+3
+
+query I
+SELECT count(*) FROM ga4.main.report('1001', dimensions => ['dateHour'], metrics => ['activeUsers'], start_date => '2026-09-01', max_rows => 15);
+----
+15
+
+query TTII
+SELECT property_id, country, sessions, activeUsers
+FROM ga4.main.report('1001', dimensions => ['country'], metrics => ['sessions', 'activeUsers'], start_date => '2026-09-01')
+ORDER BY country;
+----
+1001	Germany	1792	1568
+1001	United Kingdom	1793	1569
+1001	United States	1781	1557
+
+query TTI
+SELECT country, dateRange, sessions
+FROM ga4.main.report('1001', dimensions => ['country'], metrics => ['sessions'], start_date => '7daysAgo',
+                     compare_start_date => '14daysAgo', compare_end_date => '8daysAgo')
+ORDER BY ALL;
+----
+Germany	comparison	434
+Germany	current	458
+United Kingdom	comparison	457
+United Kingdom	current	442
+United States	comparison	454
+United States	current	439
+
+# dimension_filter on a dimension that is not selected.
+query I
+SELECT sum(eventCount) FROM ga4.main.report('1001', dimensions => ['country'], metrics => ['eventCount'], start_date => '2026-09-01',
+    dimension_filter => '{"filter": {"fieldName": "eventName", "stringFilter": {"value": "purchase"}}}');
+----
+7038
+
+query II
+SELECT DISTINCT subject_to_thresholding, sampling_ratio
+FROM ga4.main.report('1001', dimensions => ['country'], metrics => ['sessions'], quality_columns => true);
+----
+true	1.0
+
+query T
+SELECT "customEvent:plan_tier" FROM ga4.main.report('1001', dimensions => ['customEvent:plan_tier'], metrics => ['sessions']);
+----
+(not set)
+
+query T
+SELECT column_name FROM (DESCRIBE SELECT * FROM ga4.main.report('1001', metrics => ['activeUsers'], max_rows => 1));
+----
+property_id
+activeUsers
+
+# ---------------------------------------- WHERE on report() (filter pushdown)
+
+query T
+SELECT DISTINCT country FROM ga4.main.report('1001', dimensions => ['country', 'deviceCategory'], metrics => ['activeUsers'], start_date => '2026-09-01')
+WHERE country = 'Germany';
+----
+Germany
+
+query T
+SELECT DISTINCT country FROM ga4.main.report('1001', dimensions => ['country', 'deviceCategory'], metrics => ['activeUsers'], start_date => '2026-09-01')
+WHERE country IN ('Germany', 'United Kingdom') ORDER BY 1;
+----
+Germany
+United Kingdom
+
+query T
+SELECT DISTINCT country FROM ga4.main.report('1001', dimensions => ['country', 'deviceCategory'], metrics => ['activeUsers'], start_date => '2026-09-01')
+WHERE country LIKE 'United%' ORDER BY 1;
+----
+United Kingdom
+United States
+
+query TTI
+SELECT country, deviceCategory, activeUsers FROM ga4.main.report('1001', dimensions => ['country', 'deviceCategory'], metrics => ['activeUsers'], start_date => '2026-09-01')
+WHERE activeUsers > 790 ORDER BY ALL;
+----
+Germany	desktop	808
+United Kingdom	mobile	793
+United States	mobile	800
+
+query I
+SELECT count(*) FROM ga4.main.report('1001', dimensions => ['country', 'deviceCategory'], metrics => ['activeUsers'], start_date => '2026-09-01')
+WHERE country = 'Atlantis';
+----
+0
+
+query I
+SELECT count(*) FROM ga4.main.report('1001', dimensions => ['country', 'deviceCategory'], metrics => ['activeUsers'], start_date => '2026-09-01')
+WHERE activeUsers > 999999999;
+----
+0
+
+query I
+SELECT count(*) FROM ga4.main.report('1001', dimensions => ['country', 'deviceCategory'], metrics => ['activeUsers'], start_date => '2026-09-01')
+WHERE country LIKE 'Z%';
+----
+0
+
+query I
+SELECT count(*) FROM ga4.main.report('1001', dimensions => ['country', 'deviceCategory'], metrics => ['activeUsers'], start_date => '2026-09-01')
+WHERE deviceCategory <> deviceCategory;
+----
+0
+
+# --------------------------------------------------------- realtime_report()
+
+query TII
+SELECT property_id, minutesAgo, activeUsers
+FROM ga4.main.realtime_report('1001', dimensions => ['minutesAgo'], metrics => ['activeUsers']) ORDER BY 2;
+----
+1001	0	10
+1001	1	11
+1001	2	12
+
+# ------------------------------------------- '' walks every readable property
+
+query TI
+SELECT property_id, count(*) FROM ga4.main.report('', dimensions => ['date'], metrics => ['activeUsers'],
+    start_date => '3daysAgo', end_date => 'yesterday') GROUP BY ALL ORDER BY ALL;
+----
+1001	3
+1002	3
+
+query T
+SELECT DISTINCT property_id FROM ga4.main.report('', metrics => ['activeUsers']) WHERE property_id = '1002';
+----
+1002
+
+query TI
+SELECT property_id, count(*) FROM ga4.main.report('', dimensions => ['date'], metrics => ['sessions']) GROUP BY ALL ORDER BY ALL;
+----
+1001	28
+1002	28
+
+query I
+SELECT count(*) FROM ga4.main.report('', dimensions => ['date'], metrics => ['sessions'], max_rows => 12);
+----
+12
+
+query TI
+SELECT property_id, count(*) FROM ga4.main.realtime_report('', dimensions => ['country'], metrics => ['activeUsers']) GROUP BY ALL ORDER BY ALL;
+----
+1001	3
+1002	3
+
+query TI
+SELECT property_id, remaining FROM ga4.main.property_quota('') WHERE quota = 'tokensPerHour' ORDER BY property_id;
+----
+1001	39990
+1002	39990
+
+query T
+SELECT DISTINCT property_id FROM ga4.main.check_compatibility('', metrics => ['sessions']) ORDER BY property_id;
+----
+1001
+1002
+
+query I
+SELECT count(*) > 0 FROM ga4.main.report('1001', dimensions => ['customEvent:plan_tier'], metrics => ['eventCount']);
+----
+true

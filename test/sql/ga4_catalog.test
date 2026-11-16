@@ -1,0 +1,184 @@
+# name: test/sql/ga4_catalog.test
+# description: Catalog listing, account/property tables, metadata and configuration functions against tests/fake_ga.py
+# group: [google_analytics]
+
+require vgi
+
+require-env VGI_GOOGLE_ANALYTICS_WORKER
+
+require-env VGI_GOOGLE_ANALYTICS_MOCK_API
+
+# Aimed at the offline fake through ATTACH options; report_page_size 10 makes a
+# modest synthetic report span several pages (and several process() ticks).
+statement ok
+ATTACH 'ga4' (TYPE vgi, LOCATION '{VGI_GOOGLE_ANALYTICS_WORKER}', data_api_url '{VGI_GOOGLE_ANALYTICS_MOCK_API}/data/v1beta', admin_api_url '{VGI_GOOGLE_ANALYTICS_MOCK_API}/admin/v1beta', report_page_size 10);
+
+# The fake accepts exactly this fixture token; it is not a Google credential.
+statement ok
+CREATE SECRET my_ga (TYPE google_analytics, access_token 'test-token');
+
+# ------------------------------------------------------------ catalog listing
+
+query T
+SELECT table_name FROM duckdb_tables() WHERE database_name = 'ga4' ORDER BY ALL;
+----
+account_summaries
+accounts
+properties
+
+query T
+SELECT function_name FROM duckdb_functions() WHERE database_name = 'ga4' AND function_type = 'table' ORDER BY ALL;
+----
+all_account_summaries
+all_accounts
+all_properties
+check_compatibility
+custom_dimensions
+custom_metrics
+data_streams
+dimensions
+key_events
+metrics
+property_quota
+realtime_report
+report
+
+# ------------------------------------------------- constraints and nullability
+
+query TTTTT
+SELECT table_name, constraint_type, constraint_column_names, referenced_table, referenced_column_names
+FROM duckdb_constraints() WHERE database_name = 'ga4'
+ORDER BY table_name, constraint_type, constraint_column_names;
+----
+account_summaries	FOREIGN KEY	[account_id]	accounts	[account_id]
+account_summaries	FOREIGN KEY	[property_id]	properties	[property_id]
+account_summaries	NOT NULL	[account_id]	NULL	[]
+account_summaries	UNIQUE	[account_id, property_id]	NULL	[]
+accounts	NOT NULL	[account_id]	NULL	[]
+accounts	PRIMARY KEY	[account_id]	NULL	[]
+properties	FOREIGN KEY	[account_id]	accounts	[account_id]
+properties	NOT NULL	[account_id]	NULL	[]
+properties	NOT NULL	[property_id]	NULL	[]
+properties	PRIMARY KEY	[property_id]	NULL	[]
+
+query TT
+SELECT table_name, column_name FROM duckdb_columns()
+WHERE database_name = 'ga4' AND NOT is_nullable ORDER BY table_name, column_name;
+----
+account_summaries	account_id
+accounts	account_id
+properties	account_id
+properties	property_id
+
+# ------------------------------------------------------------- admin tables
+
+query TTT
+SELECT account_id, display_name, region_code FROM ga4.main.accounts ORDER BY ALL;
+----
+5001	Example Co	US
+5002	Empty Co	GB
+
+query TTTT
+SELECT account_id, account_name, property_id, property_name
+FROM ga4.main.account_summaries ORDER BY ALL;
+----
+5001	Example Co	1001	Main Website
+5001	Example Co	1002	Mobile App
+5002	Empty Co	NULL	NULL
+
+# The table and its scan function are the same listing.
+query I
+SELECT (SELECT count(*) FROM ga4.main.account_summaries) = (SELECT count(*) FROM ga4.main.all_account_summaries());
+----
+true
+
+query I
+SELECT (SELECT count(*) FROM ga4.main.accounts) = (SELECT count(*) FROM ga4.main.all_accounts());
+----
+true
+
+query TTTTT
+SELECT property_id, account_id, display_name, time_zone, currency_code FROM ga4.main.properties ORDER BY 1;
+----
+1001	5001	Main Website	America/New_York	USD
+1002	5001	Mobile App	America/New_York	USD
+
+query I
+SELECT count(*) FROM ga4.main.properties WHERE account_id = '5001';
+----
+2
+
+query I
+SELECT count(*) FROM ga4.main.properties WHERE account_id = '5002';
+----
+0
+
+# ------------------------------------------------------- metadata functions
+
+query T
+SELECT column_type FROM ga4.main.dimensions('0') WHERE api_name = 'date';
+----
+DATE
+
+query T
+SELECT column_type FROM ga4.main.metrics('') WHERE api_name = 'activeUsers';
+----
+BIGINT
+
+query T
+SELECT api_name FROM ga4.main.dimensions('1001') WHERE custom_definition;
+----
+customEvent:plan_tier
+
+query II
+SELECT count(*), count(*) FILTER (WHERE custom_definition) FROM ga4.main.dimensions('1001');
+----
+10	1
+
+query TT
+SELECT api_name, compatibility FROM ga4.main.check_compatibility('1001', dimensions => ['itemName'], metrics => ['sessions']) WHERE requested;
+----
+sessions	INCOMPATIBLE
+
+query TTII
+SELECT property_id, quota, consumed, remaining FROM ga4.main.property_quota('1001') ORDER BY quota;
+----
+1001	concurrentRequests	0	10
+1001	tokensPerDay	1	199990
+1001	tokensPerHour	1	39990
+
+# ------------------------------------------------- configuration functions
+
+query TTTT
+SELECT property_id, stream_id, type, measurement_id FROM ga4.main.data_streams('properties/1001');
+----
+1001	77	WEB_DATA_STREAM	G-TEST1001
+
+query TT
+SELECT property_id, api_name FROM ga4.main.custom_dimensions('') ORDER BY ALL;
+----
+1001	customEvent:plan_tier
+1001	customUser:signup_cohort
+1002	customEvent:plan_tier
+1002	customUser:signup_cohort
+
+query T
+SELECT api_name FROM ga4.main.custom_metrics('1001');
+----
+customEvent:credits
+
+query TT
+SELECT event_name, counting_method FROM ga4.main.key_events('1002');
+----
+purchase	ONCE_PER_EVENT
+
+query I
+SELECT count(*) FROM ga4.main.data_streams('') WHERE property_id = '1002';
+----
+1
+
+# A property the credential cannot read is an error that names the fix.
+statement error
+SELECT * FROM ga4.main.data_streams('9999');
+----
+Viewer role

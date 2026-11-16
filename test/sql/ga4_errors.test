@@ -1,0 +1,104 @@
+# name: test/sql/ga4_errors.test
+# description: Argument, credential and ATTACH-option errors against tests/fake_ga.py
+# group: [google_analytics]
+
+require vgi
+
+require-env VGI_GOOGLE_ANALYTICS_WORKER
+
+require-env VGI_GOOGLE_ANALYTICS_MOCK_API
+
+# Aimed at the offline fake through ATTACH options; report_page_size 10 makes a
+# modest synthetic report span several pages (and several process() ticks).
+statement ok
+ATTACH 'ga4' (TYPE vgi, LOCATION '{VGI_GOOGLE_ANALYTICS_WORKER}', data_api_url '{VGI_GOOGLE_ANALYTICS_MOCK_API}/data/v1beta', admin_api_url '{VGI_GOOGLE_ANALYTICS_MOCK_API}/admin/v1beta', report_page_size 10);
+
+# The fake accepts exactly this fixture token; it is not a Google credential.
+statement ok
+CREATE SECRET my_ga (TYPE google_analytics, access_token 'test-token');
+
+# ------------------------------------------- report() mistakes fail at bind
+
+statement error
+SELECT * FROM ga4.main.report('1001', dimensions => ['contry'], metrics => ['sessions']);
+----
+Did you mean
+
+statement error
+SELECT * FROM ga4.main.report('G-XYZ', metrics => ['sessions']);
+----
+measurement id
+
+statement error
+SELECT * FROM ga4.main.report('1001', metrics => ['sessions'], start_date => 'last week');
+----
+does not match the required pattern
+
+statement error
+SELECT * FROM ga4.main.report('1001', metrics => ['sessions'], dimension_filter => '{');
+----
+not valid JSON
+
+statement error
+SELECT * FROM ga4.main.report('1001');
+----
+at least one metric
+
+# Custom definitions differ per property, so '' cannot resolve them.
+statement error
+SELECT * FROM ga4.main.report('', dimensions => ['customEvent:plan_tier']);
+----
+pass a property id
+
+# ----------------------------------------------------------------- credentials
+
+query I
+SELECT count(*) FROM duckdb_secrets() WHERE name = 'my_ga' AND secret_string LIKE '%test-token%';
+----
+0
+
+statement ok
+CREATE OR REPLACE SECRET my_ga (TYPE google_analytics, access_token 'wrong');
+
+statement error
+SELECT * FROM ga4.main.accounts;
+----
+401
+
+statement ok
+DROP SECRET my_ga;
+
+# No secret, and overriding the API URLs rules out the ADC fallback.
+statement error
+SELECT * FROM ga4.main.accounts;
+----
+CREATE SECRET
+
+statement ok
+CREATE SECRET my_ga (TYPE google_analytics, access_token 'test-token');
+
+query I
+SELECT count(*) FROM ga4.main.accounts;
+----
+2
+
+# ------------------------------------------------- bad ATTACH options fail
+
+# The worker exposes one catalog, named ga4, so free the name first.
+statement ok
+DETACH ga4;
+
+statement error
+ATTACH 'ga4' (TYPE vgi, LOCATION '{VGI_GOOGLE_ANALYTICS_WORKER}', credentials 'required');
+----
+not one of auto, secret
+
+statement error
+ATTACH 'ga4' (TYPE vgi, LOCATION '{VGI_GOOGLE_ANALYTICS_WORKER}', report_page_size 0);
+----
+between 1 and 250000
+
+statement error
+ATTACH 'ga4' (TYPE vgi, LOCATION '{VGI_GOOGLE_ANALYTICS_WORKER}', data_api_url 'file:///etc/passwd');
+----
+http
