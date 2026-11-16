@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 0.1.3 (2026-11-16)
+
+- Python 3.14 is now the floor (CI, Docker image, tooling).
+- Offline SQL tests (`test/sql/*.test`) against a mock Google Analytics API,
+  run through DuckDB over stdio, launch and HTTP by `ci/run-integration.sh`
+  (`make test-sql-all`), and in CI.
+
 ## 0.1.2 (2026-11-16)
 
 - Bump vgi-python to 0.52.2.
