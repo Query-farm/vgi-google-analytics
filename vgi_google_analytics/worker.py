@@ -257,6 +257,7 @@ _CATALOG_TAGS = {
     "provider": "google-analytics",
     "domain": "web-analytics",
     "vgi.title": "Google Analytics 4",
+    "vgi.subtitle": "Read Google Analytics 4 reports, realtime activity and property settings as tables.",
     "vgi.source_url": SOURCE_URL,
     "vgi.author": "Query Farm LLC <hello@query.farm>",
     "vgi.copyright": (

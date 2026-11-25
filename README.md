@@ -40,6 +40,8 @@ ORDER BY date;
 > refused before a socket opens. `tests/test_readonly_guard.py` fails the build
 > if either guarantee weakens.
 
+vgi-google-analytics 0.2.0 speaks VGI protocol 3.4, so it needs Haybarn 2.0.1 or newer (Haybarn 2.0.0 loads a 3.3 `vgi` extension that cannot attach it).
+
 ## Contents
 
 - [Run](#run)
@@ -77,10 +79,10 @@ Pin a tag for a deployment, so the worker cannot change under you:
 
 ```sql
 ATTACH 'ga4' (TYPE vgi,
-  LOCATION 'uvx --from git+https://github.com/Query-farm/vgi-google-analytics@v0.1.3 vgi-google-analytics');
+  LOCATION 'uvx --from git+https://github.com/Query-farm/vgi-google-analytics@v0.2.0 vgi-google-analytics');
 ```
 
-[Haybarn](https://query.farm) 2.0.0rc11 or newer ships the compatible `vgi.v3`
+[Haybarn](https://query.farm) 2.0.1 or newer ships the compatible `vgi.v3`
 extension. The client and worker must both use VGI 3; older VGI 2 extensions
 cannot attach this worker. The worker uses a separate DuckDB 1.5.5 environment
 for filter evaluation, provisioned automatically by the script headers or `uvx`.

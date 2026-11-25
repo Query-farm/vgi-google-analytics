@@ -28,9 +28,3 @@ the name consumers actually type.\
 "ga4.main.account_summaries" = { ignore = [
   { code = "VGI807", kind = "domain-exemption", reason = "identity is UNIQUE(account_id, property_id); property_id is NULL for an account with no readable property, so it cannot be a primary key" },
 ] }
-
-# `accounts.account_id` is the table's own primary key, not a reference to
-# another table; the rule matches the `<table>_id` shape without knowing that.
-"ga4.main.accounts" = { ignore = [
-  { code = "VGI808", kind = "tooling-bug", reason = "account_id is this table's own primary key, not a reference" },
-] }

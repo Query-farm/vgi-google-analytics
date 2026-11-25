@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## 0.2.0 (2026-11-25)
+
+- Speaks VGI protocol 3.4: require vgi-python `>=0.55.1,<0.56`; uv.lock re-locked. This release
+  needs Haybarn 2.0.1 (or stock DuckDB 2.0 with `INSTALL vgi FROM query_farm`): Haybarn 2.0.0
+  loads a 3.3 `vgi` extension that cannot attach it.
+- SQL tests run on haybarn-unittest 2.0.1rc3.
+- `serve` extra is `vgi-python[http,oauth]` (HTTP serving plus the JWT verification Orchard
+  hosted mode needs).
+
 ## 0.1.3 (2026-11-16)
 
 - Python 3.14 is now the floor (CI, Docker image, tooling).
